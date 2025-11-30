@@ -1,6 +1,6 @@
-from app.services.payments_excel_loader import load_payments_excel
 from app.services.sales_excel_loader import load_sales_excel
-import numpy as np
+from app.services.payments_excel_loader import load_payments_excel
+
 from datetime import datetime
 import jdatetime
 from fastapi import FastAPI, UploadFile, File, Request
@@ -48,29 +48,67 @@ def parse_jalali_or_gregorian(value):
     return pd.to_datetime(s, errors="coerce")
 
 
-def format_gregorian_to_jalali(value):
+def to_jalali_str(ts):
     """
-    تاریخ میلادی (Timestamp/datetime/...) را به رشته شمسی yyyy/mm/dd تبدیل می‌کند.
-    اگر نشد، مقدار خام را برمی‌گرداند.
+    تبدیل Timestamp میلادی به رشته تاریخ شمسی yyyy/mm/dd برای نمایش.
+    """
+    if pd.isna(ts):
+        return ""
+    if not isinstance(ts, (pd.Timestamp, datetime)):
+        try:
+            ts = pd.to_datetime(ts)
+        except Exception:
+            return str(ts)
+    d = ts.date()
+    try:
+        jd = jdatetime.date.fromgregorian(date=d)
+        return f"{jd.year:04d}/{jd.month:02d}/{jd.day:02d}"
+    except Exception:
+        return str(ts.date())
+
+
+def normalize_name(name):
+    """
+    نرمال‌سازی نام فارسی برای مقایسه:
+    - حذف فاصله‌های اضافه
+    - یکسان‌سازی ي/ی و ك/ک
+    - حروف کوچک
+    """
+    if pd.isna(name):
+        return ""
+    s = str(name).strip()
+    if not s:
+        return ""
+    # یکسان‌سازی حروف
+    s = s.replace("ي", "ی").replace("ك", "ک")
+    # کوچک کردن
+    s = s.lower()
+    # جمع کردن فاصله‌های اضافی
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def canonicalize_code(value):
+    """
+    تبدیل کد عددی (مثلاً 13 یا 13.0 یا '13 ') به رشته تمیز.
+    اگر قابل تبدیل به عدد نباشد، همان رشته را برمی‌گرداند.
     """
     if pd.isna(value):
-        return ""
-    dt = None
-    if isinstance(value, pd.Timestamp):
-        dt = value.to_pydatetime()
-    elif isinstance(value, datetime):
-        dt = value
-    else:
-        try:
-            dt = pd.to_datetime(value)
-        except Exception:
-            return str(value)
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    # حذف ویرگول‌های جداکننده هزارگان
+    s_no_comma = s.replace(",", "")
     try:
-        gdate = dt.date()
-        j = jdatetime.date.fromgregorian(date=gdate)
-        return f"{j.year:04d}/{j.month:02d}/{j.day:02d}"
+        f = float(s_no_comma)
+        # اگر به عدد صحیح می‌خورد، همان را برگردان
+        if f.is_integer():
+            return str(int(f))
     except Exception:
-        return str(value)
+        # اگر اصلاً عدد نبود (مثل 13/01) همان رشته را برگردان
+        return s
+    return s
 
 
 app = FastAPI()
@@ -82,6 +120,8 @@ LAST_UPLOAD = {
     "checks": None,
     # نام ستونی که برای گروه کالا استفاده می‌کنیم (ProductCode یا ProductGroup)
     "group_col": None,
+    # تنظیمات گروه‌ها (پورسانت + مهلت + نقدی بودن)
+    "group_config": None,
 }
 
 BASE_CSS = """
@@ -265,6 +305,9 @@ hr {
     background: #eef2ff;
     color: #3730a3;
 }
+.checkbox-center {
+    text-align: center;
+}
 </style>
 """
 
@@ -272,115 +315,200 @@ hr {
 
 
 def get_priority(product_group: str) -> str:
-    """(فعلاً استفاده نمی‌شود، برای آینده نگه داشته‌ایم)"""
+    """
+    حالت پشتیبان: اگر هیچ تنظیمی برای گروه نداشتیم،
+    از روی نام گروه، نقدی/عادی را حدس می‌زنیم.
+    """
     text = str(product_group)
     if "نقدی" in text:
         return "cash"
     return "normal"
 
 
-def extract_customer_for_payment(row, checks_df: pd.DataFrame):
-    """تشخیص کد مشتری برای هر پرداخت، از روی CustomerCode یا شماره چک."""
-    stype = row.get("SourceType")
+def build_sales_name_map(sales_df: pd.DataFrame) -> dict:
+    """
+    ساخت نگاشت نام مشتری نرمال‌شده -> CustomerKey
+    برای استفاده در وصل کردن پرداخت‌ها.
+    """
+    name_map: dict = {}
+    if "CustomerName" in sales_df.columns and "CustomerKey" in sales_df.columns:
+        tmp = sales_df[["CustomerName", "CustomerKey"]
+                       ].dropna().drop_duplicates()
+        for _, row in tmp.iterrows():
+            nm = normalize_name(row["CustomerName"])
+            key = row["CustomerKey"]
+            if nm and pd.notna(key):
+                name_map[nm] = key
+    return name_map
 
-    # 1) واریز مستقیم از حساب مشتری
-    if stype == "CustomerAccount":
-        code = row.get("CustomerCode")
-        if pd.isna(code) or str(code).strip() == "":
-            return None
-        return str(code)
 
-    # 2) پرداخت از محل وصول چک
-    if stype == "Check":
-        desc = str(row.get("Description") or "")
-        # مثال: "وصول چک CHK-6001"
-        m = re.search(r"(CHK-\d+)", desc)
-        if not m:
-            return None
+def extract_customer_for_payment(row, checks_df: pd.DataFrame, name_map: dict):
+    """
+    تشخیص کد مشتری برای هر پرداخت:
+    1) اول از روی CustomerCode (اگر باشد)
+    2) بعد از روی شماره چک در توضیحات (اگر در فایل چک موجود باشد)
+    3) در نهایت از روی نام مشتری (واریز یا برداشت کننده) با تطبیق متنی
+    """
+    # 1) کد طرف حساب اگر هست
+    code = None
+    for col in ["CustomerCode", "PartyCode", "AccountCode"]:
+        if col in row.index:
+            code = canonicalize_code(row.get(col))
+            if code:
+                return code
+
+    # 2) جستجوی شماره چک در توضیحات
+    desc = str(row.get("Description") or "")
+    m = re.search(r"(CHK-\d+)", desc)
+    if m is not None and not checks_df.empty and "CheckNumber" in checks_df.columns:
         check_number = m.group(1)
-
-        if "CheckNumber" not in checks_df.columns:
-            return None
-
         match = checks_df.loc[checks_df["CheckNumber"] == check_number]
         if not match.empty:
-            return str(match.iloc[0]["CustomerCode"])
-        return None
+            chk_code = canonicalize_code(match.iloc[0].get("CustomerCode"))
+            if chk_code:
+                return chk_code
+
+    # 3) تطبیق بر اساس نام واریز / برداشت کننده
+    name_val = None
+    for col in ["CustomerName", "PayerName"]:
+        if col in row.index:
+            name_val = row.get(col)
+            break
+    if name_val is not None:
+        nm = normalize_name(name_val)
+        if nm in name_map:
+            return name_map[nm]
 
     return None
 
 
-def prepare_payments(payments_df: pd.DataFrame, checks_df: pd.DataFrame) -> pd.DataFrame:
+def prepare_payments(payments_df: pd.DataFrame, checks_df: pd.DataFrame, sales_df: pd.DataFrame) -> pd.DataFrame:
     """آماده‌سازی دیتافریم پرداخت‌ها و وصل کردن هر پرداخت به یک مشتری."""
     payments_df = payments_df.copy()
-    payments_df["PaymentDate"] = payments_df["PaymentDate"].apply(
-        parse_jalali_or_gregorian
-    )
-    payments_df["Amount"] = payments_df["Amount"].astype(float)
 
+    # تاریخ پرداخت
+    if "PaymentDate" in payments_df.columns:
+        payments_df["PaymentDate"] = payments_df["PaymentDate"].apply(
+            parse_jalali_or_gregorian)
+
+    # مبلغ پرداخت
+    if "Amount" in payments_df.columns:
+        payments_df["Amount"] = payments_df["Amount"].astype(float)
+    else:
+        raise ValueError("در فایل پرداخت‌ها ستونی به نام 'Amount' پیدا نشد.")
+
+    # نگاشت نام مشتری از روی فایل فروش
+    name_map = build_sales_name_map(sales_df)
+
+    # تعیین مشتری هر پرداخت
     payments_df["ResolvedCustomer"] = payments_df.apply(
-        lambda row: extract_customer_for_payment(row, checks_df), axis=1
+        lambda row: extract_customer_for_payment(row, checks_df, name_map),
+        axis=1,
     )
 
     # فقط پرداخت‌هایی که مشتری‌شان مشخص شده است
     payments_df = payments_df[payments_df["ResolvedCustomer"].notna()]
+
     return payments_df
 
 
-def prepare_sales(
-    sales_df: pd.DataFrame,
-    group_col: str,
-    commission_map: dict,
-    due_days_map: dict,
-    cash_groups: set,
-) -> pd.DataFrame:
+def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) -> pd.DataFrame:
     """
     آماده‌سازی دیتافریم فروش‌ها:
-    - تعیین تاریخ فاکتور
-    - تعیین Priority از روی تیک اولویت نقدی در مرحله دوم
-    - تعیین مهلت تسویه و سررسید از روی تنظیمات هر گروه
-    - تعیین درصد پورسانت از روی commission_map
+    - تبدیل تاریخ‌ها
+    - تعیین CustomerKey استاندارد
+    - تعیین DueDate بر اساس:
+        * اگر در اکسل ستونی به نام DueDate باشد، همان (شمسی) مبناست
+        * در غیر این صورت، از روی مهلت تسویه گروه (group_config) محاسبه می‌شود
+    - تعیین نقدی/عادی بر اساس تنظیمات گروه (تیک نقدی) و در صورت نبود تنظیم، fallback
+    - تعیین درصد پورسانت از روی group_config
     """
     sales_df = sales_df.copy()
+
+    # تاریخ فاکتور
+    if "InvoiceDate" not in sales_df.columns:
+        raise ValueError("در فایل فروش ستونی به نام 'InvoiceDate' پیدا نشد.")
     sales_df["InvoiceDate"] = sales_df["InvoiceDate"].apply(
-        parse_jalali_or_gregorian
-    )
+        parse_jalali_or_gregorian)
 
-    # --- تعیین Priority از روی تیک اولویت نقدی --- #
-    def row_priority(row):
-        key = row.get(group_col)
-        return "cash" if key in cash_groups else "normal"
+    # CustomerKey استاندارد برای وصل کردن به پرداخت‌ها
+    if "CustomerCode" in sales_df.columns:
+        sales_df["CustomerKey"] = sales_df["CustomerCode"].map(
+            canonicalize_code)
+    elif "CustomerName" in sales_df.columns:
+        sales_df["CustomerKey"] = sales_df["CustomerName"].map(normalize_name)
+    else:
+        # اگر هیچ‌کدام نباشد، عملاً نمی‌توانیم وصل کنیم؛ ولی اجازه ادامه می‌دهیم
+        sales_df["CustomerKey"] = None
 
-    sales_df["Priority"] = sales_df.apply(row_priority, axis=1)
+    # اگر ستون DueDate داریم (شمسی)، تبدیلش کنیم؛ اگر نداریم، فعلاً NaT
+    if "DueDate" in sales_df.columns:
+        sales_df["DueDate"] = sales_df["DueDate"].apply(
+            parse_jalali_or_gregorian)
+    else:
+        sales_df["DueDate"] = pd.NaT
+
+    # محاسبه DueDate نهایی
+    def compute_due_date(row):
+        invoice_date = row["InvoiceDate"]
+        if pd.isna(invoice_date):
+            return pd.NaT
+
+        # اگر در اکسل تاریخ سررسید داده شده، همان را مبنا بگیریم
+        if not pd.isna(row["DueDate"]):
+            return row["DueDate"]
+
+        # در غیر این صورت، از تنظیمات گروه مهلت را برداریم
+        key = str(row.get(group_col))
+        cfg = group_config.get(key) if group_config else None
+        due_days = None
+        if cfg is not None:
+            due_days = cfg.get("due_days")
+
+        # اگر در تنظیمات گروه مهلت مشخص نشده بود، fallback
+        if not due_days or due_days <= 0:
+            # اگر نام گروه شامل "نقدی" باشد، 7 روز؛ در غیر این صورت 90
+            base_priority = get_priority(row.get(group_col, ""))
+            due_days = 7 if base_priority == "cash" else 90
+
+        return invoice_date + pd.to_timedelta(due_days, unit="D")
+
+    sales_df["DueDate"] = sales_df.apply(compute_due_date, axis=1)
+
+    # تعیین Priority از روی تنظیمات گروه (تیک نقدی)
+    def compute_priority(row):
+        key = str(row.get(group_col))
+        cfg = group_config.get(key) if group_config else None
+        if cfg is not None:
+            return "cash" if cfg.get("is_cash") else "normal"
+
+        # fallback: اگر فاصله تاریخ فاکتور تا سررسید ≤ 7 روز باشد، نقدی
+        try:
+            delta_days = (row["DueDate"] - row["InvoiceDate"]).days
+            if delta_days <= 7:
+                return "cash"
+        except Exception:
+            pass
+
+        return get_priority(row.get(group_col, ""))
+
+    sales_df["Priority"] = sales_df.apply(compute_priority, axis=1)
     sales_df["PriorityRank"] = sales_df["Priority"].map(
-        {"cash": 0, "normal": 1})
+        {"cash": 0, "normal": 1}).fillna(1).astype(int)
 
-    # --- تعیین مهلت تسویه (روز) از روی تنظیمات هر گروه --- #
-    def row_due_days(row):
-        key = row.get(group_col)
-        if key in due_days_map:
-            try:
-                d = int(float(due_days_map[key]))
-                if d > 0:
-                    return d
-            except Exception:
-                pass
-        # اگر برای این گروه چیزی تنظیم نشده بود، دیفالت:
-        return 7 if row["Priority"] == "cash" else 90
-
-    sales_df["DueDays"] = sales_df.apply(row_due_days, axis=1)
-    sales_df["DueDate"] = sales_df["InvoiceDate"] + pd.to_timedelta(
-        sales_df["DueDays"], unit="D"
-    )
-
-    # --- تعیین درصد پورسانت از روی گروه کالا --- #
+    # درصد پورسانت از روی تنظیمات گروه
     def row_percent(row):
-        key = row.get(group_col)
-        return float(commission_map.get(key, 0.0))
+        key = str(row.get(group_col))
+        cfg = group_config.get(key) if group_config else None
+        if cfg is None:
+            return 0.0
+        return float(cfg.get("percent", 0.0))
 
     sales_df["CommissionPercent"] = sales_df.apply(row_percent, axis=1)
 
     # فیلدهای پولی و کمکی
+    if "Amount" not in sales_df.columns:
+        raise ValueError("در فایل فروش ستونی به نام 'Amount' پیدا نشد.")
     sales_df["Amount"] = sales_df["Amount"].astype(float)
     sales_df["PaidAmount"] = 0.0
     sales_df["Remaining"] = sales_df["Amount"]
@@ -389,31 +517,21 @@ def prepare_sales(
     return sales_df
 
 
-def compute_commissions(
-    sales_raw,
-    payments_raw,
-    checks_raw,
-    group_col,
-    commission_map,
-    due_days_map,
-    cash_groups,
-):
+def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group_col):
     """
     هسته‌ی محاسبات:
     - آماده‌سازی فروش‌ها و پرداخت‌ها
     - تسویه فاکتورها طبق اولویت (نقدی → عادی، قدیمی → جدید)
     - محاسبه پورسانت
     """
-    sales_df = prepare_sales(
-        sales_raw, group_col, commission_map, due_days_map, cash_groups
-    )
+    sales_df = prepare_sales(sales_raw, group_config, group_col)
 
     checks_df = (
         checks_raw.copy()
         if checks_raw is not None and not checks_raw.empty
         else pd.DataFrame()
     )
-    payments_df = prepare_payments(payments_raw, checks_df)
+    payments_df = prepare_payments(payments_raw, checks_df, sales_df)
 
     # اگر پرداختی نداریم، فقط جدول پورسانت صفر برگردان
     if payments_df.empty:
@@ -427,10 +545,10 @@ def compute_commissions(
         )
         return sales_df, salesperson_df, pd.DataFrame()
 
-    # تسویه پرداخت‌ها به تفکیک مشتری
-    for cust, pay_group in payments_df.groupby("ResolvedCustomer"):
+    # تسویه پرداخت‌ها به تفکیک CustomerKey
+    for cust_key, pay_group in payments_df.groupby("ResolvedCustomer"):
         # فاکتورهای این مشتری
-        cust_invoice_idx = sales_df.index[sales_df["CustomerCode"] == cust]
+        cust_invoice_idx = sales_df.index[sales_df["CustomerKey"] == cust_key]
         if len(cust_invoice_idx) == 0:
             continue
 
@@ -442,11 +560,12 @@ def compute_commissions(
         )
 
         # پرداخت‌ها به ترتیب تاریخ
-        pay_group = pay_group.sort_values("PaymentDate")
+        if "PaymentDate" in pay_group.columns:
+            pay_group = pay_group.sort_values("PaymentDate")
 
         for _, p in pay_group.iterrows():
             remaining_payment = p["Amount"]
-            pay_date = p["PaymentDate"]
+            pay_date = p.get("PaymentDate", None)
 
             for idx in cust_invoice_idx:
                 if remaining_payment <= 0:
@@ -458,7 +577,9 @@ def compute_commissions(
 
                 allocate = min(remaining_payment, remaining_invoice)
 
-                in_due = bool(pay_date <= sales_df.at[idx, "DueDate"])
+                in_due = True
+                if isinstance(pay_date, (pd.Timestamp, datetime)):
+                    in_due = bool(pay_date <= sales_df.at[idx, "DueDate"])
 
                 # اگر پرداخت در مهلت مجاز این فاکتور بوده، پورسانت تعلق می‌گیرد
                 if in_due:
@@ -506,7 +627,7 @@ async def index():
                         <div class="value" style="font-weight:400; font-size:12px;">
                             <span class="badge-pill">InvoiceID</span>
                             <span class="badge-pill">InvoiceDate</span>
-                            <span class="badge-pill">DueDate (اختیاری)</span>
+                            <span class="badge-pill">DueDate</span>
                             <span class="badge-pill">CustomerCode</span>
                             <span class="badge-pill">CustomerName</span>
                             <span class="badge-pill">ProductGroup / ProductCode</span>
@@ -516,13 +637,13 @@ async def index():
                     </div>
                     <div class="summary-card summary-payments">
                         <div class="label">فایل پرداخت‌ها</div>
-                        <div class="value">ستون‌های پیشنهادی:</div>
+                        <div class="value">ستون‌های پیشنهادی (پس از تبدیل):</div>
                         <div class="value" style="font-weight:400; font-size:12px;">
                             <span class="badge-pill">PaymentID</span>
                             <span class="badge-pill">PaymentDate</span>
                             <span class="badge-pill">Amount</span>
-                            <span class="badge-pill">SourceType</span>
                             <span class="badge-pill">CustomerCode</span>
+                            <span class="badge-pill">CustomerName</span>
                             <span class="badge-pill">Description</span>
                         </div>
                     </div>
@@ -555,10 +676,10 @@ async def index():
                     <div class="form-row">
                         <label>فایل اکسل چک‌ها (اختیاری)</label><br/>
                         <input type="file" name="checks_file" accept=".xlsx,.xls" />
-                        <small>برای اتصال پرداخت‌های نوع «Check» به مشتری استفاده می‌شود.</small>
+                        <small>برای اتصال پرداخت‌های حاوی شماره چک به مشتری استفاده می‌شود.</small>
                     </div>
 
-                    <button type="submit">مرحله بعد: تعریف درصد و مهلت تسویه</button>
+                    <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>
                 </form>
             </div>
         </body>
@@ -576,15 +697,12 @@ async def upload_all(
     # ✅ فروش‌ها با لودر اختصاصی
     df_sales = load_sales_excel(sales_file.file)
 
-    # ✅ پرداخت‌ها با لودر اختصاصی جدید
+    # ✅ پرداخت‌ها با لودر اختصاصی
     df_pay = load_payments_excel(payments_file.file)
 
-    # چک‌ها (اختیاری و مقاوم)
-    if checks_file is not None and getattr(checks_file, "filename", None):
-        try:
-            df_chk = pd.read_excel(checks_file.file)
-        except Exception:
-            df_chk = pd.DataFrame()
+    # چک‌ها (در صورت انتخاب)
+    if checks_file is not None and checks_file.filename:
+        df_chk = pd.read_excel(checks_file.file)
     else:
         df_chk = pd.DataFrame()
 
@@ -621,21 +739,22 @@ async def upload_all(
     LAST_UPLOAD["checks"] = df_chk
     LAST_UPLOAD["group_col"] = group_col
 
-    # ساخت فرم تعریف درصد، مهلت تسویه و اولویت نقدی
+    # ساخت فرم تعریف تنظیمات برای هر گروه
     rows_html = ""
     for g in groups:
+        g_str = str(g)
         rows_html += f"""
         <tr>
-            <td>{g}</td>
+            <td>{g_str}</td>
             <td>
-                <input type="hidden" name="group_name" value="{g}" />
+                <input type="hidden" name="group_name" value="{g_str}" />
                 <input type="number" step="0.01" name="group_percent" placeholder="مثلاً 2 برای 2٪" />
             </td>
             <td>
-                <input type="number" step="1" name="group_due_days" placeholder="مثلاً 90" />
+                <input type="number" step="1" name="group_due_days" placeholder="مثلاً 7، 30، 90" />
             </td>
-            <td style="text-align:center;">
-                <input type="checkbox" name="cash_group" value="{g}" />
+            <td class="checkbox-center">
+                <input type="checkbox" name="cash_group" value="{g_str}" />
             </td>
         </tr>
         """
@@ -644,17 +763,17 @@ async def upload_all(
     <html>
         <head>
             <meta charset="utf-8" />
-            <title>تعریف درصد پورسانت و مهلت تسویه</title>
+            <title>تعریف تنظیمات گروه‌های کالایی</title>
             {BASE_CSS}
         </head>
         <body>
             <div class="container">
-                <h1>تعریف تنظیمات برای گروه‌های کالایی</h1>
+                <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
                 <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
                 <ul style="font-size:12px; color:#4b5563;">
                     <li>درصد پورسانت (مثلاً 2 یعنی 2٪)</li>
-                    <li>مهلت تسویه (تعداد روز بعد از تاریخ فاکتور که اگر پرداخت شد، پورسانت تعلق می‌گیرد)</li>
-                    <li>اگر این گروه باید در اولویت نقدی تسویه شود، تیک «اولویت نقدی» را بزن</li>
+                    <li>مهلت تسویه (بر حسب روز از تاریخ فاکتور)</li>
+                    <li>تیک «اولویت نقدی» اگر می‌خواهی فاکتورهای این گروه زودتر از بقیه تسویه شوند.</li>
                 </ul>
 
                 <form action="/calculate-commission" method="post">
@@ -681,7 +800,7 @@ async def upload_all(
     return HTMLResponse(content=html)
 
 
-# ------------------ UI مرحله ۲: گرفتن درصدها و محاسبه ------------------ #
+# ------------------ UI مرحله ۲: گرفتن تنظیمات و محاسبه ------------------ #
 
 @app.post("/calculate-commission", response_class=HTMLResponse)
 async def calculate_commission(request: Request):
@@ -709,54 +828,43 @@ async def calculate_commission(request: Request):
     group_names = form.getlist("group_name")
     percents = form.getlist("group_percent")
     due_days_list = form.getlist("group_due_days")
-    cash_groups_input = form.getlist("cash_group")
+    cash_groups = set(form.getlist("cash_group"))
 
-    cash_groups = set(cash_groups_input)
+    # ساخت دیکشنری تنظیمات گروه → {percent, due_days, is_cash}
+    group_config: dict = {}
+    for name, p, dd in zip(group_names, percents, due_days_list):
+        key = str(name).strip()
+        if not key:
+            continue
 
-    # ساخت دیکشنری گروه → درصد پورسانت
-    commission_map: dict[str, float] = {}
-    for name, p in zip(group_names, percents):
-        name = str(name)
+        # درصد پورسانت
+        percent_val = 0.0
         p_str = str(p).strip()
-        if not p_str:
-            continue
+        if p_str:
+            p_str = p_str.replace(",", ".")
+            try:
+                percent_val = float(p_str) / 100.0  # تبدیل به ضریب
+            except ValueError:
+                percent_val = 0.0
 
-        p_str = p_str.replace(",", ".")
-        try:
-            val = float(p_str)
-        except ValueError:
-            # اگر کاربر چیز نامعتبر وارد کرد، ردش می‌کنیم
-            continue
+        # مهلت تسویه
+        due_days_val = None
+        dd_str = str(dd).strip()
+        if dd_str:
+            try:
+                due_days_val = int(float(dd_str))
+            except ValueError:
+                due_days_val = None
 
-        # هر عددی که وارد می‌شود، "درصد" است.
-        # 1  → 1%  → 0.01
-        # 2  → 2%  → 0.02
-        # 0.5 → 0.5% → 0.005
-        val = val / 100.0
+        is_cash = key in cash_groups
 
-        # درصد منفی یا صفر را نادیده بگیریم (اختیاری)
-        if val <= 0:
-            continue
+        group_config[key] = {
+            "percent": percent_val,
+            "due_days": due_days_val,
+            "is_cash": is_cash,
+        }
 
-        commission_map[name] = val
-
-    # دیکشنری گروه → مهلت تسویه (روز)
-    due_days_map: dict[str, int] = {}
-    for name, d in zip(group_names, due_days_list):
-        name = str(name)
-        d_str = str(d).strip()
-        if not d_str:
-            continue
-        d_str = d_str.replace(",", ".")
-        try:
-            d_val = int(float(d_str))
-        except ValueError:
-            continue
-        if d_val <= 0:
-            continue
-        due_days_map[name] = d_val
-
-    if not commission_map:
+    if not group_config:
         html = f"""
         <html>
             <head>
@@ -767,7 +875,7 @@ async def calculate_commission(request: Request):
             <body>
                 <div class="container">
                     <h1>خطا</h1>
-                    <p>هیچ درصد پورسانتی وارد نشده است.</p>
+                    <p>هیچ تنظیم معتبری برای گروه‌ها وارد نشده است.</p>
                     <a class="footer-link" href="javascript:history.back()">بازگشت</a>
                 </div>
             </body>
@@ -780,9 +888,11 @@ async def calculate_commission(request: Request):
     df_chk = LAST_UPLOAD["checks"]
     group_col = LAST_UPLOAD["group_col"]
 
+    LAST_UPLOAD["group_config"] = group_config
+
     # محاسبه پورسانت و وضعیت فاکتورها
     sales_result, salesperson_result, _ = compute_commissions(
-        df_sales, df_pay, df_chk, group_col, commission_map, due_days_map, cash_groups
+        df_sales, df_pay, df_chk, group_config, group_col
     )
 
     # خلاصه ساده
@@ -799,22 +909,20 @@ async def calculate_commission(request: Request):
     total_commission = 0
     if "TotalCommission" in salesperson_result.columns:
         total_commission = float(
-            salesperson_result["TotalCommission"].sum() or 0
-        )
+            salesperson_result["TotalCommission"].sum() or 0)
 
     # آماده‌سازی جدول فاکتورها برای نمایش
     invoices_view = sales_result.copy()
-    # درصد را به درصد انسانی تبدیل کنیم (۱ یعنی ۱٪)
-    invoices_view["CommissionPercent"] = (
-        invoices_view["CommissionPercent"] * 100
-    ).round(2)
 
-    # نمایش تاریخ‌ها به صورت شمسی
-    for col in ["InvoiceDate", "DueDate"]:
-        if col in invoices_view.columns:
-            invoices_view[col] = invoices_view[col].apply(
-                format_gregorian_to_jalali
-            )
+    # تبدیل تاریخ‌ها به شمسی برای نمایش
+    for dt_col in ["InvoiceDate", "DueDate"]:
+        if dt_col in invoices_view.columns:
+            invoices_view[dt_col] = invoices_view[dt_col].map(to_jalali_str)
+
+    # درصد را به درصد انسانی تبدیل کنیم (۱ یعنی ۱٪)
+    if "CommissionPercent" in invoices_view.columns:
+        invoices_view["CommissionPercent"] = (
+            invoices_view["CommissionPercent"] * 100).round(2)
 
     # بج رنگی برای نوع فروش
     if "Priority" in invoices_view.columns:
@@ -848,8 +956,7 @@ async def calculate_commission(request: Request):
     invoices_table_html = ""
     if cols:
         invoices_table_html = invoices_view[cols].to_html(
-            index=False, border=0, escape=False
-        )
+            index=False, border=0, escape=False)
 
     # جدول پورسانت به تفکیک فروشنده
     if "TotalCommission" in salesperson_result.columns:
