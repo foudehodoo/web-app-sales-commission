@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.services.sales_excel_loader import load_sales_excel
 from app.services.payments_excel_loader import load_payments_excel
 
@@ -7,9 +9,66 @@ from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import HTMLResponse
 import pandas as pd
 import re
+import os
 
+# ------------------ تنظیمات فایل پیش‌فرض گروه‌ها ------------------ #
+
+DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
+
+
+def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
+    """
+    خواندن تنظیمات پیش‌فرض گروه‌ها از یک اکسل:
+    ستون‌ها: Group, Percent, DueDays, IsCash, (اختیاری: GroupName)
+    Percent بر حسب درصد (مثلاً 2 یعنی 2٪)
+    """
+    if not os.path.exists(path):
+        return {}
+
+    df = pd.read_excel(path)
+
+    cfg: dict[str, dict] = {}
+
+    for _, row in df.iterrows():
+        key = str(row.get("Group", "")).strip()
+        if not key:
+            continue
+
+        # درصد (در اکسل به صورت درصد انسانی ذخیره شده)
+        percent_val = 0.0
+        p = row.get("Percent")
+        if pd.notna(p):
+            try:
+                percent_val = float(p) / 100.0
+            except ValueError:
+                percent_val = 0.0
+
+        # مهلت تسویه
+        due_days_val = None
+        d = row.get("DueDays")
+        if pd.notna(d):
+            try:
+                due_days_val = int(float(d))
+            except ValueError:
+                due_days_val = None
+
+        # نقدی بودن
+        is_cash_val = bool(row.get("IsCash"))
+
+        cfg[key] = {
+            "percent": percent_val,
+            "due_days": due_days_val,
+            "is_cash": is_cash_val,
+        }
+
+    return cfg
+
+
+# یکبار در استارتاپ بخوان
+DEFAULT_GROUP_CONFIG = load_default_group_config()
 
 # ------------------ توابع تاریخ ------------------ #
+
 
 def parse_jalali_or_gregorian(value):
     """
@@ -32,6 +91,7 @@ def parse_jalali_or_gregorian(value):
         month = int(m.group(2))
         day = int(m.group(3))
 
+        # اگر سال >= 1300 است، فرض می‌کنیم شمسی است
         if year >= 1300:
             try:
                 jd = jdatetime.date(year, month, day)
@@ -40,8 +100,10 @@ def parse_jalali_or_gregorian(value):
             except Exception:
                 return pd.NaT
         else:
+            # احتمالاً میلادی است
             return pd.to_datetime(s, errors="coerce")
 
+    # بقیهٔ فرمت‌ها را به pandas می‌سپاریم (میلادی)
     return pd.to_datetime(s, errors="coerce")
 
 
@@ -66,6 +128,7 @@ def to_jalali_str(ts):
 
 # ------------------ نرمال‌سازی کد و اسم ------------------ #
 
+
 def canonicalize_code(value):
     """
     تبدیل کد عددی (مثلاً 13 یا 13.0 یا '13 ') به رشته تمیز.
@@ -86,7 +149,7 @@ def canonicalize_code(value):
     return s
 
 
-def normalize_persian_name(s: str) -> str:
+def normalize_persian_name(s) -> str:
     """
     نرمال‌سازی اسم فارسی برای نمایش:
     - ي/ی و ك/ک و ... → معادل فارسی
@@ -109,7 +172,7 @@ def normalize_persian_name(s: str) -> str:
         "أ": "ا",
         "ٱ": "ا",
         "ئ": "ی",
-        "‌": " ",   # نیم‌فاصله
+        "‌": " ",  # نیم‌فاصله
     }
     for src, dst in replacements.items():
         s = s.replace(src, dst)
@@ -424,22 +487,26 @@ def prepare_payments(
     """
     payments_df = payments_df.copy()
 
+    # تاریخ
     if "PaymentDate" in payments_df.columns:
         payments_df["PaymentDate"] = payments_df["PaymentDate"].apply(
             parse_jalali_or_gregorian
         )
 
+    # مبلغ
     if "Amount" not in payments_df.columns:
         raise ValueError(
             "در فایل پرداخت‌ها نتوانستم ستون مبلغ را پیدا کنم."
         )
     payments_df["Amount"] = payments_df["Amount"].astype(float)
 
+    # ستون‌های کمکی
     if "CustomerCode" not in payments_df.columns:
         payments_df["CustomerCode"] = None
     if "CustomerName" not in payments_df.columns:
         payments_df["CustomerName"] = None
 
+    # map نام→کد
     name_code_map = build_name_code_mapping(sales_df)
 
     payments_df["ResolvedCustomer"] = payments_df.apply(
@@ -481,6 +548,7 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
     else:
         sales_df["CustomerKey"] = None
 
+    # اگر DueDate داشتیم، تبدیل کنیم؛ اگر نه، بعداً حساب می‌کنیم
     if "DueDate" in sales_df.columns:
         sales_df["DueDate"] = sales_df["DueDate"].apply(
             parse_jalali_or_gregorian)
@@ -549,7 +617,13 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
     return sales_df
 
 
-def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group_col):
+def compute_commissions(
+    sales_raw: pd.DataFrame,
+    payments_raw: pd.DataFrame,
+    checks_raw: pd.DataFrame,
+    group_config: dict,
+    group_col: str,
+):
     """
     هسته‌ی محاسبات:
     - آماده‌سازی فروش‌ها و پرداخت‌ها
@@ -565,6 +639,7 @@ def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group
     )
     payments_df = prepare_payments(payments_raw, checks_df, sales_df)
 
+    # اگر پرداختی نداریم
     if payments_df.empty:
         salesperson_df = (
             sales_df.groupby("Salesperson", dropna=False)["CommissionAmount"]
@@ -632,6 +707,100 @@ def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group
     )
 
     return sales_df, salesperson_df, payments_df
+
+
+def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) -> str:
+    """
+    بخش دیباگ:
+    - نام مشتری در فروش + نام نرمال‌شده
+    - نام مشتری در پرداخت + نام نرمال‌شده + کد شناسایی شده
+    - نگاشت name_key → کد مشتری
+    """
+    parts: list[str] = []
+
+    # نام‌ها در فروش
+    if "CustomerName" in sales_df.columns and "CustomerCode" in sales_df.columns:
+        sales_view = sales_df[["CustomerCode", "CustomerName"]].dropna(
+            how="all").copy()
+        sales_view["NormName"] = sales_view["CustomerName"].apply(
+            normalize_persian_name
+        )
+        sales_view = sales_view.drop_duplicates().sort_values(
+            ["CustomerCode", "CustomerName"]
+        )
+
+        parts.append("<h2>🧪 دیباگ نام‌ها (فروش)</h2>")
+        parts.append('<div class="table-wrapper">')
+        parts.append(sales_view.to_html(index=False, border=0))
+        parts.append("</div>")
+    else:
+        parts.append(
+            "<p>در جدول فروش ستون‌های CustomerName / CustomerCode پیدا نشد.</p>"
+        )
+
+    # نام‌ها در پرداخت‌ها
+    if not payments_df.empty:
+        cols = []
+        for c in [
+            "PaymentID",
+            "CustomerCode",
+            "CustomerName",
+            "ResolvedCustomer",
+            "ResolvedCustomerKey",
+            "Amount",
+        ]:
+            if c in payments_df.columns:
+                cols.append(c)
+
+        if cols:
+            pay_view = payments_df[cols].copy()
+            if "CustomerName" in pay_view.columns:
+                pay_view["NormName"] = pay_view["CustomerName"].apply(
+                    normalize_persian_name
+                )
+            else:
+                pay_view["NormName"] = ""
+            pay_view = pay_view.drop_duplicates().head(200)
+
+            parts.append("<h2>🧪 دیباگ نام‌ها (پرداخت‌ها)</h2>")
+            parts.append(
+                '<p style="font-size:12px;color:#6b7280;">'
+                "ستون ResolvedCustomer/ResolvedCustomerKey نشان می‌دهد این ردیف به کدام کد مشتری وصل شده (اگر شده باشد).</p>"
+            )
+            parts.append('<div class="table-wrapper">')
+            parts.append(pay_view.to_html(index=False, border=0))
+            parts.append("</div>")
+    else:
+        parts.append("<p>هیچ پرداختی بعد از لود یافت نشد.</p>")
+
+    # نگاشت name_key → کد مشتری
+    name_code_map = build_name_code_mapping(sales_df)
+    if name_code_map:
+        map_rows = []
+        for key, code in sorted(name_code_map.items(), key=lambda x: x[1]):
+            map_rows.append(
+                {
+                    "NameKey (برای تطبیق)": key,
+                    "CustomerCode": code,
+                }
+            )
+        map_df = pd.DataFrame(map_rows)
+
+        parts.append(
+            "<h2>🧪 نگاشت نام نرمال‌شده → کد مشتری (از روی فروش‌ها)</h2>")
+        parts.append(
+            '<p style="font-size:12px;color:#6b7280;">'
+            "در این‌جا فاصله‌ها حذف شده‌اند. اگر NameKey پرداخت با این جدول برابر باشد، باید به همان CustomerCode وصل شود.</p>"
+        )
+        parts.append('<div class="table-wrapper">')
+        parts.append(map_df.to_html(index=False, border=0))
+        parts.append("</div>")
+    else:
+        parts.append(
+            "<p>نتوانستم از روی فروش‌ها map نام→کد بسازم (هیچ اسم یکتایی وجود ندارد یا ستون‌ها ناقص است).</p>"
+        )
+
+    return "<hr/>" + "\n".join(parts)
 
 
 # ------------------ UI مرحله ۱: آپلود اکسل‌ها ------------------ #
@@ -732,6 +901,7 @@ async def upload_all(
     else:
         df_chk = pd.DataFrame()
 
+    # تشخیص ستون گروه کالا
     if "ProductCode" in df_sales.columns:
         group_col = "ProductCode"
     elif "ProductGroup" in df_sales.columns:
@@ -763,23 +933,66 @@ async def upload_all(
     LAST_UPLOAD["checks"] = df_chk
     LAST_UPLOAD["group_col"] = group_col
 
+    # حدس ستون نام گروه/کالا برای نمایش
+    name_col_candidates = [
+        "ProductName",
+        "ProductGroupName",
+        "ProductGroupTitle",
+        "نام کالا",
+        "نام گروه کالا",
+    ]
+    group_name_col = None
+    for c in name_col_candidates:
+        if c in df_sales.columns and c != group_col:
+            group_name_col = c
+            break
+
     rows_html = ""
     for g in groups:
         g_str = str(g)
+
+        # پیدا کردن نام خوانا برای این گروه
+        display_name = ""
+        if group_name_col is not None:
+            sample_rows = df_sales[df_sales[group_col] == g]
+            if not sample_rows.empty:
+                display_name = str(sample_rows.iloc[0][group_name_col])
+
+        if display_name:
+            display_text = f"{g_str} – {display_name}"
+        else:
+            display_text = g_str
+
+        # مقادیر پیش‌فرض از فایل تنظیمات (اگر وجود داشته باشد)
+        cfg = DEFAULT_GROUP_CONFIG.get(g_str, {})
+        default_percent = cfg.get("percent")      # به صورت ضریب
+        default_due_days = cfg.get("due_days")
+        default_is_cash = cfg.get("is_cash", False)
+
+        percent_value_attr = (
+            f'value="{default_percent * 100:.2f}"' if default_percent else ""
+        )
+        due_days_value_attr = (
+            f'value="{default_due_days}"' if default_due_days is not None else ""
+        )
+        checked_attr = "checked" if default_is_cash else ""
+
         rows_html += f"""
-        <tr>
-            <td>{g_str}</td>
-            <td>
-                <input type="hidden" name="group_name" value="{g_str}" />
-                <input type="number" step="0.01" name="group_percent" placeholder="مثلاً 2 برای 2٪" />
-            </td>
-            <td>
-                <input type="number" step="1" name="group_due_days" placeholder="مثلاً 7، 30، 90" />
-            </td>
-            <td class="checkbox-center">
-                <input type="checkbox" name="cash_group" value="{g_str}" />
-            </td>
-        </tr>
+            <tr>
+                <td>{display_text}</td>
+                <td>
+                    <input type="hidden" name="group_name" value="{g_str}" />
+                    <input type="number" step="0.01" name="group_percent"
+                           placeholder="مثلاً 2 برای 2٪" {percent_value_attr} />
+                </td>
+                <td>
+                    <input type="number" step="1" name="group_due_days"
+                           placeholder="مثلاً 7، 30، 90" {due_days_value_attr} />
+                </td>
+                <td class="checkbox-center">
+                    <input type="checkbox" name="cash_group" value="{g_str}" {checked_attr} />
+                </td>
+            </tr>
         """
 
     html = f"""
@@ -821,91 +1034,6 @@ async def upload_all(
     </html>
     """
     return HTMLResponse(content=html)
-
-
-def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) -> str:
-    parts: list[str] = []
-
-    if "CustomerName" in sales_df.columns and "CustomerCode" in sales_df.columns:
-        sales_view = sales_df[["CustomerCode", "CustomerName"]].dropna(
-            how="all").copy()
-        sales_view["NormName"] = sales_view["CustomerName"].apply(
-            normalize_persian_name
-        )
-        sales_view = sales_view.drop_duplicates().sort_values(
-            ["CustomerCode", "CustomerName"]
-        )
-
-        parts.append("<h2>🧪 دیباگ نام‌ها (فروش)</h2>")
-        parts.append('<div class="table-wrapper">')
-        parts.append(sales_view.to_html(index=False, border=0))
-        parts.append("</div>")
-    else:
-        parts.append(
-            "<p>در جدول فروش ستون‌های CustomerName / CustomerCode پیدا نشد.</p>"
-        )
-
-    if not payments_df.empty:
-        cols = []
-        for c in [
-            "PaymentID",
-            "CustomerCode",
-            "CustomerName",
-            "ResolvedCustomer",
-            "ResolvedCustomerKey",
-            "Amount",
-        ]:
-            if c in payments_df.columns:
-                cols.append(c)
-
-        if cols:
-            pay_view = payments_df[cols].copy()
-            if "CustomerName" in pay_view.columns:
-                pay_view["NormName"] = pay_view["CustomerName"].apply(
-                    normalize_persian_name
-                )
-            else:
-                pay_view["NormName"] = ""
-            pay_view = pay_view.drop_duplicates().head(200)
-
-            parts.append("<h2>🧪 دیباگ نام‌ها (پرداخت‌ها)</h2>")
-            parts.append(
-                '<p style="font-size:12px;color:#6b7280;">'
-                "ستون ResolvedCustomer/ResolvedCustomerKey نشان می‌دهد این ردیف به کدام کد مشتری وصل شده (اگر شده باشد).</p>"
-            )
-            parts.append('<div class="table-wrapper">')
-            parts.append(pay_view.to_html(index=False, border=0))
-            parts.append("</div>")
-    else:
-        parts.append("<p>هیچ پرداختی بعد از لود یافت نشد.</p>")
-
-    name_code_map = build_name_code_mapping(sales_df)
-    if name_code_map:
-        map_rows = []
-        for key, code in sorted(name_code_map.items(), key=lambda x: x[1]):
-            map_rows.append(
-                {
-                    "NameKey (برای تطبیق)": key,
-                    "CustomerCode": code,
-                }
-            )
-        map_df = pd.DataFrame(map_rows)
-
-        parts.append(
-            "<h2>🧪 نگاشت نام نرمال‌شده → کد مشتری (از روی فروش‌ها)</h2>")
-        parts.append(
-            '<p style="font-size:12px;color:#6b7280;">'
-            "در این‌جا فاصله‌ها حذف شده‌اند. اگر NameKey پرداخت با این جدول برابر باشد، باید به همان CustomerCode وصل شود.</p>"
-        )
-        parts.append('<div class="table-wrapper">')
-        parts.append(map_df.to_html(index=False, border=0))
-        parts.append("</div>")
-    else:
-        parts.append(
-            "<p>نتوانستم از روی فروش‌ها map نام→کد بسازم (هیچ اسم یکتایی وجود ندارد یا ستون‌ها ناقص است).</p>"
-        )
-
-    return "<hr/>" + "\n".join(parts)
 
 
 # ------------------ UI مرحله ۲: گرفتن تنظیمات و محاسبه ------------------ #
@@ -1018,15 +1146,18 @@ async def calculate_commission(request: Request):
 
     invoices_view = sales_result.copy()
 
+    # تاریخ‌ها به شمسی برای نمایش
     for dt_col in ["InvoiceDate", "DueDate"]:
         if dt_col in invoices_view.columns:
             invoices_view[dt_col] = invoices_view[dt_col].map(to_jalali_str)
 
+    # درصد به صورت انسانی
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = (
             invoices_view["CommissionPercent"] * 100
         ).round(2)
 
+    # بج رنگی Priority
     if "Priority" in invoices_view.columns:
         def pri_badge(v):
             if v == "cash":
@@ -1126,7 +1257,98 @@ async def calculate_commission(request: Request):
                     {salesperson_table_html}
                 </div>
 
+                <form action="/save-group-config" method="post" style="margin-top: 16px;">
+                    <button type="submit">ذخیره تنظیمات فعلی گروه‌ها به عنوان پیش‌فرض</button>
+                </form>
+
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+# ------------------ ذخیره تنظیمات گروه‌ها در فایل پیش‌فرض ------------------ #
+
+@app.post("/save-group-config", response_class=HTMLResponse)
+async def save_group_config():
+    df_sales = LAST_UPLOAD.get("sales")
+    group_col = LAST_UPLOAD.get("group_col")
+    group_config = LAST_UPLOAD.get("group_config")
+
+    if df_sales is None or group_col is None or not group_config:
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>خطا در ذخیره تنظیمات</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    <h1>خطا در ذخیره تنظیمات گروه‌ها</h1>
+                    <p>هنوز فروش یا تنظیمات گروه‌ها در حافظه نیست.</p>
+                    <p>اول یکبار مراحل آپلود و تعریف درصدها را انجام بده، بعد دکمهٔ ذخیره را بزن.</p>
+                    <a class="footer-link" href="/">بازگشت به شروع</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    # پیدا کردن ستون نام کالا/گروه برای نوشتن در اکسل
+    name_col_candidates = [
+        "ProductName",
+        "ProductGroupName",
+        "ProductGroupTitle",
+        "نام کالا",
+        "نام گروه کالا",
+    ]
+    group_name_col = None
+    for c in name_col_candidates:
+        if c in df_sales.columns and c != group_col:
+            group_name_col = c
+            break
+
+    rows = []
+    for group_key, cfg in group_config.items():
+        group_key_str = str(group_key)
+
+        # پیدا کردن نام برای این گروه
+        group_name = ""
+        if group_name_col is not None:
+            mask = df_sales[group_col] == group_key
+            sample_rows = df_sales[mask]
+            if not sample_rows.empty:
+                group_name = str(sample_rows.iloc[0][group_name_col])
+
+        rows.append(
+            {
+                "Group": group_key_str,
+                "GroupName": group_name,
+                "Percent": (cfg.get("percent") or 0) * 100,  # درصد انسانی
+                "DueDays": cfg.get("due_days"),
+                "IsCash": bool(cfg.get("is_cash")),
+            }
+        )
+
+    df_out = pd.DataFrame(rows)
+    df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>ذخیره تنظیمات گروه‌ها</title>
+            {BASE_CSS}
+        </head>
+        <body>
+            <div class="container">
+                <h1>تنظیمات گروه‌ها ذخیره شد ✅</h1>
+                <p>فایل <code>{DEFAULT_GROUP_CONFIG_PATH}</code> در کنار برنامه ایجاد/به‌روزرسانی شد.</p>
+                <p>از این به بعد، در مرحلهٔ تعریف درصدها، مقادیر پیش‌فرض از همین فایل خوانده می‌شود.</p>
+                <a class="footer-link" href="/">بازگشت و شروع محاسبهٔ جدید</a>
             </div>
         </body>
     </html>
