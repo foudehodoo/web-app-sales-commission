@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 import pandas as pd
 import re
 import os
+import json
 
 # ------------------ تنظیمات فایل پیش‌فرض گروه‌ها ------------------ #
 
@@ -19,8 +20,14 @@ DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
     """
     خواندن تنظیمات پیش‌فرض گروه‌ها از یک اکسل:
-    ستون‌ها: Group, Percent, DueDays, IsCash, (اختیاری: GroupName)
-    Percent بر حسب درصد (مثلاً 2 یعنی 2٪)
+    ستون‌ها: Group, Percent, DueDays, IsCash
+    - Group : اسم گروه کالا (مثلاً "نقدی ۲٪ هفت روزه")
+    - Percent : درصد پورسانت (به صورت انسانی: 2 یعنی 2٪)
+    - DueDays : مهلت تسویه (روز)
+    - IsCash : 0/1 یا True/False
+    خروجی: دیکشنری
+        group_name -> {percent, due_days, is_cash}
+    که percent به صورت ضریب (0.02) برمی‌گردد.
     """
     if not os.path.exists(path):
         return {}
@@ -34,7 +41,7 @@ def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
         if not key:
             continue
 
-        # درصد (در اکسل به صورت درصد انسانی ذخیره شده)
+        # درصد (در اکسل به صورت درصد انسانی ذخیره شده است)
         percent_val = 0.0
         p = row.get("Percent")
         if pd.notna(p):
@@ -64,11 +71,7 @@ def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
     return cfg
 
 
-# یکبار در استارتاپ بخوان
-DEFAULT_GROUP_CONFIG = load_default_group_config()
-
 # ------------------ توابع تاریخ ------------------ #
-
 
 def parse_jalali_or_gregorian(value):
     """
@@ -127,7 +130,6 @@ def to_jalali_str(ts):
 
 
 # ------------------ نرمال‌سازی کد و اسم ------------------ #
-
 
 def canonicalize_code(value):
     """
@@ -226,6 +228,20 @@ body {
     border-radius: 16px;
     box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
 }
+.navbar {
+    margin-bottom: 16px;
+}
+.navbar a {
+    display: inline-block;
+    margin-inline-end: 12px;
+    font-size: 13px;
+    color: #2563eb;
+    text-decoration: none;
+}
+.navbar a.active {
+    font-weight: 700;
+    text-decoration: underline;
+}
 h1 {
     margin-top: 0;
     color: #111827;
@@ -258,7 +274,9 @@ label {
     font-size: 13px;
 }
 input[type="file"],
-input[type="number"] {
+input[type="number"],
+input[type="text"],
+select {
     width: 100%;
     padding: 6px 8px;
     border-radius: 8px;
@@ -268,7 +286,9 @@ input[type="number"] {
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 input[type="file"]:focus,
-input[type="number"]:focus {
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus {
     outline: none;
     border-color: #2563eb;
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
@@ -393,6 +413,16 @@ hr {
 }
 .checkbox-center {
     text-align: center;
+}
+.message {
+    margin: 12px 0;
+    font-size: 13px;
+}
+.message-success {
+    color: #047857;
+}
+.message-error {
+    color: #b91c1c;
 }
 </style>
 """
@@ -803,7 +833,7 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
     return "<hr/>" + "\n".join(parts)
 
 
-# ------------------ UI مرحله ۱: آپلود اکسل‌ها ------------------ #
+# ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -816,6 +846,11 @@ async def index():
         </head>
         <body>
             <div class="container">
+                <div class="navbar">
+                    <a href="/" class="active">محاسبه پورسانت</a>
+                    <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                </div>
+
                 <h1>محاسبه پورسانت فروش</h1>
                 <p>مرحله ۱ از ۲ – لطفاً فایل‌های اکسل فروش، پرداخت‌ها و در صورت وجود چک‌ها را انتخاب کن.</p>
 
@@ -878,7 +913,7 @@ async def index():
                         <small>برای اتصال پرداخت‌های حاوی شماره چک به مشتری استفاده می‌شود.</small>
                     </div>
 
-                    <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>
+                    <button type="submit">مرحله بعد: تنظیم گروه‌ها و پورسانت</button>
                 </form>
             </div>
         </body>
@@ -916,6 +951,10 @@ async def upload_all(
             </head>
             <body>
                 <div class="container">
+                    <div class="navbar">
+                        <a href="/" class="active">محاسبه پورسانت</a>
+                        <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                    </div>
                     <h1>خطا در فایل فروش‌ها</h1>
                     <p>در فایل فروش‌ها ستونی به نام <b>ProductCode</b> یا <b>ProductGroup</b> پیدا نشد.</p>
                     <p>لطفاً یکی از این ستون‌ها را به اکسل اضافه کن و دوباره امتحان کن.</p>
@@ -933,7 +972,10 @@ async def upload_all(
     LAST_UPLOAD["checks"] = df_chk
     LAST_UPLOAD["group_col"] = group_col
 
-    # حدس ستون نام گروه/کالا برای نمایش
+    # 📥 خواندن تنظیمات پیش‌فرض گروه‌ها از group_config.xlsx
+    default_group_cfg = load_default_group_config()
+
+    # حدس ستون نام گروه/کالا برای نمایش (که در متن نوشته شود)
     name_col_candidates = [
         "ProductName",
         "ProductGroupName",
@@ -947,6 +989,18 @@ async def upload_all(
             group_name_col = c
             break
 
+    # آماده‌سازی داده برای جاوااسکریپت (منوی کشویی گروه کالا)
+    js_cfg_map = {
+        gname: {
+            "percent": (cfg.get("percent") or 0) * 100,  # درصد انسانی برای UI
+            "due_days": cfg.get("due_days"),
+            "is_cash": bool(cfg.get("is_cash")),
+        }
+        for gname, cfg in default_group_cfg.items()
+    }
+    js_cfg_json = json.dumps(js_cfg_map, ensure_ascii=False)
+
+    # ساخت ردیف‌های جدول مرحله ۲
     rows_html = ""
     for g in groups:
         g_str = str(g)
@@ -963,25 +1017,51 @@ async def upload_all(
         else:
             display_text = g_str
 
-        # مقادیر پیش‌فرض از فایل تنظیمات (اگر وجود داشته باشد)
-        cfg = DEFAULT_GROUP_CONFIG.get(g_str, {})
-        default_percent = cfg.get("percent")      # به صورت ضریب
-        default_due_days = cfg.get("due_days")
-        default_is_cash = cfg.get("is_cash", False)
+        # اگر در فایل پیش‌فرض، گروهی با همین نام وجود داشته باشد → آن را به عنوان انتخاب خودکار در نظر بگیر
+        pre_cfg = default_group_cfg.get(g_str)
 
-        percent_value_attr = (
-            f'value="{default_percent * 100:.2f}"' if default_percent else ""
-        )
-        due_days_value_attr = (
-            f'value="{default_due_days}"' if default_due_days is not None else ""
-        )
-        checked_attr = "checked" if default_is_cash else ""
+        # مقدار ورودی‌ها
+        if pre_cfg:
+            percent_value_attr = f'value="{(pre_cfg.get("percent") or 0) * 100:.2f}"'
+            due_days_val = pre_cfg.get("due_days")
+            due_days_value_attr = (
+                f'value="{due_days_val}"' if due_days_val is not None else ""
+            )
+            checked_attr = "checked" if pre_cfg.get("is_cash") else ""
+            selected_category = g_str
+        else:
+            percent_value_attr = ""
+            due_days_value_attr = ""
+            checked_attr = ""
+            selected_category = ""
+
+        # منوی کشویی گروه کالا
+        options_html = '<option value="">-- انتخاب کن --</option>'
+        for cat_name, cfg in default_group_cfg.items():
+            cat_percent = (cfg.get("percent") or 0) * 100
+            cat_due = cfg.get("due_days")
+            cat_is_cash = cfg.get("is_cash")
+            label_parts = [cat_name]
+            label_parts.append(f"{cat_percent:.2f}٪")
+            if cat_due is not None:
+                label_parts.append(f"{cat_due} روز")
+            if cat_is_cash:
+                label_parts.append("نقدی")
+            option_label = " | ".join(label_parts)
+
+            sel_attr = "selected" if cat_name == selected_category else ""
+            options_html += f'<option value="{cat_name}" {sel_attr}>{option_label}</option>'
 
         rows_html += f"""
             <tr>
                 <td>{display_text}</td>
                 <td>
                     <input type="hidden" name="group_name" value="{g_str}" />
+                    <select name="group_category" onchange="onCategoryChange(this)">
+                        {options_html}
+                    </select>
+                </td>
+                <td>
                     <input type="number" step="0.01" name="group_percent"
                            placeholder="مثلاً 2 برای 2٪" {percent_value_attr} />
                 </td>
@@ -999,37 +1079,73 @@ async def upload_all(
     <html>
         <head>
             <meta charset="utf-8" />
-            <title>تعریف تنظیمات گروه‌های کالایی</title>
+            <title>تنظیم گروه‌ها و پورسانت</title>
             {BASE_CSS}
         </head>
         <body>
             <div class="container">
-                <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
-                <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
-                <ul style="font-size:12px; color:#4b5563;">
-                    <li>درصد پورسانت (مثلاً 2 یعنی 2٪)</li>
-                    <li>مهلت تسویه (بر حسب روز از تاریخ فاکتور)</li>
-                    <li>تیک «اولویت نقدی» اگر می‌خواهی فاکتورهای این گروه زودتر از بقیه تسویه شوند.</li>
-                </ul>
+                <div class="navbar">
+                    <a href="/">محاسبه پورسانت</a>
+                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                </div>
 
-                <form action="/calculate-commission" method="post">
-                    <div class="table-wrapper">
-                        <table>
-                            <tr>
-                                <th>گروه کالا</th>
-                                <th>درصد پورسانت (%)</th>
-                                <th>مهلت تسویه (روز)</th>
-                                <th>اولویت نقدی</th>
-                            </tr>
-                            {rows_html}
-                        </table>
-                    </div>
-                    <br/>
-                    <button type="submit">محاسبه پورسانت</button>
-                </form>
+            <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
+            <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
+            <ul style="font-size:12px; color:#4b5563;">
+                <li>ستون <b>گروه کالا</b> از روی فایل پیش‌فرض (<code>group_config.xlsx</code>) خوانده می‌شود.</li>
+                <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
+            </ul>
 
-                <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
+            <form action="/calculate-commission" method="post">
+                <div class="table-wrapper">
+                    <table>
+                        <tr>
+                            <th>کد/گروه کالا + نام</th>
+                            <th>گروه کالا (from اکسل)</th>
+                            <th>درصد پورسانت (%)</th>
+                            <th>مهلت تسویه (روز)</th>
+                            <th>اولویت نقدی</th>
+                        </tr>
+                        {rows_html}
+                    </table>
+                </div>
+                <br/>
+                <button type="submit">محاسبه پورسانت</button>
+            </form>
+
+            <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
             </div>
+
+            <script>
+                const CATEGORY_CONFIG = {js_cfg_json};
+
+                function onCategoryChange(sel) {{
+                    const code = sel.value;
+                    if (!code) return;
+                    const cfg = CATEGORY_CONFIG[code];
+                    if (!cfg) return;
+                    const row = sel.closest('tr');
+                    if (!row) return;
+
+                    const percentInput = row.querySelector('input[name="group_percent"]');
+                    const dueInput = row.querySelector('input[name="group_due_days"]');
+                    const cashCheckbox = row.querySelector('input[name="cash_group"]');
+
+                    if (percentInput) {{
+                        percentInput.value = cfg.percent != null ? cfg.percent : "";
+                    }}
+                    if (dueInput) {{
+                        if (cfg.due_days != null && cfg.due_days !== undefined) {{
+                            dueInput.value = cfg.due_days;
+                        }} else {{
+                            dueInput.value = "";
+                        }}
+                    }}
+                    if (cashCheckbox) {{
+                        cashCheckbox.checked = !!cfg.is_cash;
+                    }}
+                }}
+            </script>
         </body>
     </html>
     """
@@ -1050,6 +1166,10 @@ async def calculate_commission(request: Request):
             </head>
             <body>
                 <div class="container">
+                    <div class="navbar">
+                        <a href="/" class="active">محاسبه پورسانت</a>
+                        <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                    </div>
                     <h1>خطا</h1>
                     <p>ابتدا باید فایل‌های اکسل را در مرحله قبل آپلود کنی.</p>
                     <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
@@ -1061,16 +1181,18 @@ async def calculate_commission(request: Request):
 
     form = await request.form()
     group_names = form.getlist("group_name")
+    categories = form.getlist("group_category")
     percents = form.getlist("group_percent")
     due_days_list = form.getlist("group_due_days")
     cash_groups = set(form.getlist("cash_group"))
 
     group_config: dict = {}
-    for name, p, dd in zip(group_names, percents, due_days_list):
+    for name, cat, p, dd in zip(group_names, categories, percents, due_days_list):
         key = str(name).strip()
         if not key:
             continue
 
+        # درصد
         percent_val = 0.0
         p_str = str(p).strip()
         if p_str:
@@ -1080,6 +1202,7 @@ async def calculate_commission(request: Request):
             except ValueError:
                 percent_val = 0.0
 
+        # مهلت تسویه
         due_days_val = None
         dd_str = str(dd).strip()
         if dd_str:
@@ -1094,6 +1217,7 @@ async def calculate_commission(request: Request):
             "percent": percent_val,
             "due_days": due_days_val,
             "is_cash": is_cash,
+            "category": str(cat).strip() if cat else None,
         }
 
     if not group_config:
@@ -1106,6 +1230,10 @@ async def calculate_commission(request: Request):
             </head>
             <body>
                 <div class="container">
+                    <div class="navbar">
+                        <a href="/">محاسبه پورسانت</a>
+                        <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                    </div>
                     <h1>خطا</h1>
                     <p>هیچ تنظیم معتبری برای گروه‌ها وارد نشده است.</p>
                     <a class="footer-link" href="javascript:history.back()">بازگشت</a>
@@ -1217,6 +1345,11 @@ async def calculate_commission(request: Request):
         </head>
         <body>
             <div class="container">
+                <div class="navbar">
+                    <a href="/" class="active">محاسبه پورسانت</a>
+                    <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                </div>
+
                 <h1>نتیجه محاسبه پورسانت</h1>
 
                 <div class="summary-grid">
@@ -1257,10 +1390,6 @@ async def calculate_commission(request: Request):
                     {salesperson_table_html}
                 </div>
 
-                <form action="/save-group-config" method="post" style="margin-top: 16px;">
-                    <button type="submit">ذخیره تنظیمات فعلی گروه‌ها به عنوان پیش‌فرض</button>
-                </form>
-
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
             </div>
         </body>
@@ -1269,86 +1398,227 @@ async def calculate_commission(request: Request):
     return HTMLResponse(content=html)
 
 
-# ------------------ ذخیره تنظیمات گروه‌ها در فایل پیش‌فرض ------------------ #
+# ------------------ UI: تب ۲ – مدیریت پیش‌فرض گروه‌های کالا ------------------ #
 
-@app.post("/save-group-config", response_class=HTMLResponse)
-async def save_group_config():
-    df_sales = LAST_UPLOAD.get("sales")
-    group_col = LAST_UPLOAD.get("group_col")
-    group_config = LAST_UPLOAD.get("group_config")
+@app.get("/group-config", response_class=HTMLResponse)
+async def group_config_page():
+    # خواندن داده‌های فعلی
+    current_cfg = load_default_group_config()
 
-    if df_sales is None or group_col is None or not group_config:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا در ذخیره تنظیمات</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    <h1>خطا در ذخیره تنظیمات گروه‌ها</h1>
-                    <p>هنوز فروش یا تنظیمات گروه‌ها در حافظه نیست.</p>
-                    <p>اول یکبار مراحل آپلود و تعریف درصدها را انجام بده، بعد دکمهٔ ذخیره را بزن.</p>
-                    <a class="footer-link" href="/">بازگشت به شروع</a>
-                </div>
-            </body>
-        </html>
+    rows = list(current_cfg.items())
+    rows_html = ""
+
+    # ردیف‌های موجود
+    for idx, (gname, cfg) in enumerate(rows):
+        percent_human = (cfg.get("percent") or 0) * 100
+        due_days = cfg.get("due_days")
+        is_cash = cfg.get("is_cash", False)
+        due_str = "" if due_days is None else str(due_days)
+        checked_attr = "checked" if is_cash else ""
+
+        rows_html += f"""
+        <tr>
+            <td><input type="text" name="cfg_group" value="{gname}" /></td>
+            <td><input type="number" step="0.01" name="cfg_percent" value="{percent_human:.2f}" /></td>
+            <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
+            <td class="checkbox-center">
+                <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
+            </td>
+        </tr>
         """
-        return HTMLResponse(content=html)
 
-    # پیدا کردن ستون نام کالا/گروه برای نوشتن در اکسل
-    name_col_candidates = [
-        "ProductName",
-        "ProductGroupName",
-        "ProductGroupTitle",
-        "نام کالا",
-        "نام گروه کالا",
-    ]
-    group_name_col = None
-    for c in name_col_candidates:
-        if c in df_sales.columns and c != group_col:
-            group_name_col = c
-            break
-
-    rows = []
-    for group_key, cfg in group_config.items():
-        group_key_str = str(group_key)
-
-        # پیدا کردن نام برای این گروه
-        group_name = ""
-        if group_name_col is not None:
-            mask = df_sales[group_col] == group_key
-            sample_rows = df_sales[mask]
-            if not sample_rows.empty:
-                group_name = str(sample_rows.iloc[0][group_name_col])
-
-        rows.append(
-            {
-                "Group": group_key_str,
-                "GroupName": group_name,
-                "Percent": (cfg.get("percent") or 0) * 100,  # درصد انسانی
-                "DueDays": cfg.get("due_days"),
-                "IsCash": bool(cfg.get("is_cash")),
-            }
-        )
-
-    df_out = pd.DataFrame(rows)
-    df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
+    # چند ردیف خالی برای افزودن گروه جدید
+    extra_rows = 5
+    base_idx = len(rows)
+    for j in range(extra_rows):
+        idx = base_idx + j
+        rows_html += f"""
+        <tr>
+            <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
+            <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
+            <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
+            <td class="checkbox-center">
+                <input type="checkbox" name="cfg_is_cash" value="{idx}" />
+            </td>
+        </tr>
+        """
 
     html = f"""
     <html>
         <head>
             <meta charset="utf-8" />
-            <title>ذخیره تنظیمات گروه‌ها</title>
+            <title>تعریف گروه‌های کالا (پیش‌فرض)</title>
             {BASE_CSS}
         </head>
         <body>
             <div class="container">
-                <h1>تنظیمات گروه‌ها ذخیره شد ✅</h1>
-                <p>فایل <code>{DEFAULT_GROUP_CONFIG_PATH}</code> در کنار برنامه ایجاد/به‌روزرسانی شد.</p>
-                <p>از این به بعد، در مرحلهٔ تعریف درصدها، مقادیر پیش‌فرض از همین فایل خوانده می‌شود.</p>
-                <a class="footer-link" href="/">بازگشت و شروع محاسبهٔ جدید</a>
+                <div class="navbar">
+                    <a href="/">محاسبه پورسانت</a>
+                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                </div>
+
+                <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
+                <p>
+                    این صفحه مخصوص این است که یک‌بار گروه‌های کالا را با درصد پورسانت، مهلت تسویه و نقدی بودن تعریف کنی.
+                    بعداً در صفحهٔ محاسبه پورسانت، این گروه‌ها در منوی کشویی «گروه کالا» استفاده می‌شوند.
+                </p>
+
+                <form action="/group-config" method="post">
+                    <div class="table-wrapper">
+                        <table>
+                            <tr>
+                                <th>نام گروه کالا</th>
+                                <th>درصد پورسانت (%)</th>
+                                <th>مهلت تسویه (روز)</th>
+                                <th>نقدی؟</th>
+                            </tr>
+                            {rows_html}
+                        </table>
+                    </div>
+                    <br/>
+                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
+                </form>
+
+                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/group-config", response_class=HTMLResponse)
+async def group_config_save(request: Request):
+    form = await request.form()
+    groups = form.getlist("cfg_group")
+    percents = form.getlist("cfg_percent")
+    due_days_list = form.getlist("cfg_due_days")
+    cash_indices = set(form.getlist("cfg_is_cash"))
+
+    rows = []
+    for idx, (g, p, dd) in enumerate(zip(groups, percents, due_days_list)):
+        g_key = str(g).strip()
+        if not g_key:
+            continue
+
+        # درصد
+        percent_val = 0.0
+        p_str = str(p).strip()
+        if p_str:
+            p_str = p_str.replace(",", ".")
+            try:
+                percent_val = float(p_str)
+            except ValueError:
+                percent_val = 0.0
+
+        # مهلت تسویه
+        due_val = None
+        dd_str = str(dd).strip()
+        if dd_str:
+            try:
+                due_val = int(float(dd_str))
+            except ValueError:
+                due_val = None
+
+        is_cash = str(idx) in cash_indices
+
+        rows.append(
+            {
+                "Group": g_key,
+                "Percent": percent_val,
+                "DueDays": due_val,
+                "IsCash": is_cash,
+            }
+        )
+
+    if rows:
+        df_out = pd.DataFrame(rows)
+        df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
+
+        message_html = """
+        <div class="message message-success">
+            تنظیمات گروه‌های کالا با موفقیت در <code>group_config.xlsx</code> ذخیره شد ✅
+        </div>
+        """
+    else:
+        # چیزی ذخیره نشده
+        message_html = """
+        <div class="message message-error">
+            هیچ ردیف معتبری برای ذخیره وارد نشده است.
+        </div>
+        """
+
+    # پس از ذخیره، دوباره فرم را با داده‌های جدید نمایش بده
+    current_cfg = load_default_group_config()
+    rows_data = list(current_cfg.items())
+    rows_html = ""
+    for idx, (gname, cfg) in enumerate(rows_data):
+        percent_human = (cfg.get("percent") or 0) * 100
+        due_days = cfg.get("due_days")
+        is_cash = cfg.get("is_cash", False)
+        due_str = "" if due_days is None else str(due_days)
+        checked_attr = "checked" if is_cash else ""
+
+        rows_html += f"""
+        <tr>
+            <td><input type="text" name="cfg_group" value="{gname}" /></td>
+            <td><input type="number" step="0.01" name="cfg_percent" value="{percent_human:.2f}" /></td>
+            <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
+            <td class="checkbox-center">
+                <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
+            </td>
+        </tr>
+        """
+
+    extra_rows = 5
+    base_idx = len(rows_data)
+    for j in range(extra_rows):
+        idx = base_idx + j
+        rows_html += f"""
+        <tr>
+            <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
+            <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
+            <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
+            <td class="checkbox-center">
+                <input type="checkbox" name="cfg_is_cash" value="{idx}" />
+            </td>
+        </tr>
+        """
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>تعریف گروه‌های کالا (پیش‌فرض)</title>
+            {BASE_CSS}
+        </head>
+        <body>
+            <div class="container">
+                <div class="navbar">
+                    <a href="/">محاسبه پورسانت</a>
+                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
+                </div>
+
+                <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
+                {message_html}
+
+                <form action="/group-config" method="post">
+                    <div class="table-wrapper">
+                        <table>
+                            <tr>
+                                <th>نام گروه کالا</th>
+                                <th>درصد پورسانت (%)</th>
+                                <th>مهلت تسویه (روز)</th>
+                                <th>نقدی؟</th>
+                            </tr>
+                            {rows_html}
+                        </table>
+                    </div>
+                    <br/>
+                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
+                </form>
+
+                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
         </body>
     </html>
