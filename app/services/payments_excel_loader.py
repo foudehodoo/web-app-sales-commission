@@ -1,190 +1,189 @@
-import math
-from typing import Optional
+# app/services/payments_excel_loader.py
+from __future__ import annotations
 
 import pandas as pd
+import re
+from typing import IO, Any
 
 
-def _normalize_str(s) -> str:
+def _find_first_col(row: pd.Series, keywords: list[str]) -> int | None:
     """
-    نرمال‌سازی متن فارسی برای مقایسه:
-    - یکسان‌سازی ی/ي و ک/ك
-    - حذف فاصله‌ی مجازی
-    - جمع کردن فاصله‌های تکراری
+    در یک سطر، اولین ستونی که یکی از کلمات داده‌شده را دارد پیدا می‌کند.
+    اگر پیدا نشد، None برمی‌گرداند.
     """
-    if s is None or (isinstance(s, float) and math.isnan(s)):
-        return ""
-    s = str(s)
-    repl = {
-        "ي": "ی",
-        "ك": "ک",
-        "‌": "",
-        "\u200c": "",
-    }
-    for k, v in repl.items():
-        s = s.replace(k, v)
-    return " ".join(s.split())
-
-
-def _find_header_top(df: pd.DataFrame) -> Optional[int]:
-    """
-    سطر بالایی هدر را پیدا می‌کند (سطر شامل «واریز یا برداشت کننده»).
-    """
-    max_rows = min(20, len(df))
-    for i in range(max_rows):
-        row_norm = [_normalize_str(v) for v in df.iloc[i]]
-        if any("واریز یا برداشت کننده" in cell for cell in row_norm):
-            return i
+    for idx, val in enumerate(row):
+        text = str(val)
+        for kw in keywords:
+            if kw in text:
+                return idx
     return None
 
 
-def _find_date_col_idx(df: pd.DataFrame) -> Optional[int]:
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        if "تاریخ" in nc and "مدرک" in nc:
-            return idx
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        if "تاریخ" in nc:
-            return idx
-    return None
-
-
-def _find_account_code_idx(df: Pd.DataFrame) -> Optional[int]:
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        if "کد طرف حساب" in nc or ("کد" in nc and "حساب" in nc):
-            return idx
-    return None
-
-
-def _find_customer_name_idx(df: pd.DataFrame) -> Optional[int]:
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        if "واریز یا برداشت کننده" in nc:
-            return idx
-    return None
-
-
-def _find_desc_idx(df: pd.DataFrame) -> Optional[int]:
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        if "توضیحات" in nc or "شرح" in nc:
-            return idx
-    return None
-
-
-def _find_deposit_withdraw_idx(df: pd.DataFrame) -> tuple[Optional[int], Optional[int]]:
-    dep = wd = None
-    for idx, c in enumerate(df.columns):
-        nc = _normalize_str(c)
-        # در فایل تو ستون‌ها دقیقا «واریزی» و «برداشتی» هستند
-        if dep is None and "واریزی" in nc:
-            dep = idx
-        if wd is None and "برداشتی" in nc:
-            wd = idx
-    return dep, wd
-
-
-def _find_doc_no_idx(df: pd.DataFrame) -> Optional[int]:
-    # اولین ستون با هدر «شماره»
-    for idx, c in enumerate(df.columns):
-        if _normalize_str(c) == "شماره":
-            return idx
-    for idx, c in enumerate(df.columns):
-        if "شماره" in _normalize_str(c):
-            return idx
-    return None
-
-
-def load_payments_excel(file) -> pd.DataFrame:
+def _load_special_bank_layout(file_obj: IO[Any]) -> pd.DataFrame:
     """
-    فایل اکسل پرداخت (گردش بانک) را به قالب استاندارد تبدیل می‌کند.
-
-    خروجی حتماً ستون‌های زیر را (در صورت امکان) خواهد داشت:
-    - PaymentDate
-    - Amount
-    - PaymentID
-    - CustomerCode
-    - CustomerName
-    - Description
-    - SourceType  (ثابت: CustomerAccount)
+    تمیز کردن فرمتی که در نمونه‌ی پرداخت.xlsx فرستادی (دفتر حساب بانکی با هدرهای فارسی چندسطره).
+    خروجی: دیتافریمی استاندارد با ستون‌های:
+      PaymentID, PaymentDate, Amount, SourceType, CustomerCode, CustomerName, Description
     """
-    # اول کل شیت را بدون هدر می‌خوانیم
-    raw = pd.read_excel(file, header=None)
+    # فایل را بدون هدر می‌خوانیم که همه‌ی سطرها را داشته باشیم
+    file_obj.seek(0)
+    raw = pd.read_excel(file_obj, header=None)
 
-    header_top_idx = _find_header_top(raw)
-    if header_top_idx is None or header_top_idx + 1 >= len(raw):
-        raise ValueError(
-            "الگوی هدر فایل پرداخت‌ها شناخته نشد. لطفاً نمونه فایل را بررسی کن.")
+    # پیدا کردن سطر متادیتا (جایی که "كد طرف حساب" نوشته شده)
+    meta_idx = None
+    for i in range(min(40, len(raw))):
+        row = raw.iloc[i].astype(str)
+        if row.str.contains("كد طرف حساب", na=False).any() or row.str.contains("کد طرف حساب", na=False).any():
+            meta_idx = i
+            break
 
-    header_bottom_idx = header_top_idx + 1
+    if meta_idx is None:
+        # این فرمت نبود
+        return pd.DataFrame()
 
-    # دو سطر هدر را با هم ادغام می‌کنیم
-    top = raw.iloc[header_top_idx].fillna("").astype(str).str.strip()
-    bot = raw.iloc[header_bottom_idx].fillna("").astype(str).str.strip()
-    combined_cols: list[str] = []
-    for t, b in zip(top, bot):
-        tn = _normalize_str(t)
-        bn = _normalize_str(b)
-        if tn and bn and tn != bn:
-            combined_cols.append(f"{tn} {bn}")
-        elif tn:
-            combined_cols.append(tn)
+    header2_idx = meta_idx + 1
+    if header2_idx >= len(raw):
+        return pd.DataFrame()
+
+    meta_row = raw.iloc[meta_idx].astype(str)
+    header2_row = raw.iloc[header2_idx].astype(str)
+
+    # پیدا کردن ایندکس ستون‌ها بر اساس متن فارسی
+    date_col = _find_first_col(header2_row, ["تاريخ", "تاریخ"])
+    type_col = _find_first_col(header2_row, ["نوع"])
+    id_col = _find_first_col(header2_row, ["شماره"])
+    cust_code_col = _find_first_col(meta_row, ["كد طرف حساب", "کد طرف حساب"])
+    cust_name_col = _find_first_col(
+        meta_row, ["واريز يا برداشت كننده", "واریز یا برداشت کننده"])
+    deposit_col = _find_first_col(header2_row, ["واريزي", "واریزی"])
+    withdraw_col = _find_first_col(header2_row, ["برداشتي", "برداشتی"])
+    desc_col = _find_first_col(meta_row, ["توضيحات", "توضیحات"])
+
+    # اگر ستون‌های حیاتی را پیدا نکردیم، ولش کن
+    if date_col is None or deposit_col is None:
+        return pd.DataFrame()
+
+    # داده‌ها از دو سطر بعد از هدر شروع می‌شوند
+    data = raw.iloc[header2_idx + 1:].copy()
+
+    # تبدیل ستون‌های مبلغ به عدد
+    for col_idx in [deposit_col, withdraw_col]:
+        if col_idx is not None:
+            data[col_idx] = pd.to_numeric(data[col_idx], errors="coerce")
+
+    records: list[dict[str, Any]] = []
+
+    for _, row in data.iterrows():
+        # مبلغ واریزی
+        amt = float(row[deposit_col]) if pd.notna(row[deposit_col]) else 0.0
+        if amt <= 0:
+            # فقط ردیف‌هایی که واقعاً واریزی دارند را می‌خواهیم
+            continue
+
+        # نوع (برای حذف "جمع ...")
+        kind = str(row[type_col]) if type_col is not None else ""
+        if "جمع" in kind:
+            # سطرهای جمع کل و جمع نقل از قبل و ... را حذف می‌کنیم
+            continue
+
+        payment_date = row[date_col] if date_col is not None else None
+        cust_code = row[cust_code_col] if cust_code_col is not None else None
+        cust_name = row[cust_name_col] if cust_name_col is not None else None
+        payment_id = row[id_col] if id_col is not None else None
+        desc_text = row[desc_col] if desc_col is not None else None
+
+        has_code = pd.notna(cust_code) and str(cust_code).strip() != ""
+        desc_str = str(desc_text or "")
+
+        # فعلاً اگر کد طرف حساب داریم، ساده فرض می‌کنیم واریز مستقیم از حساب مشتری است
+        # (در آینده اگر نیاز شد، می‌توانیم "Check" و ارتباط با فایل چک‌ها را هم فعال کنیم)
+        if has_code:
+            source_type = "CustomerAccount"
         else:
-            combined_cols.append(bn)
+            # اگر کد مشتری نداریم ولی کلمه "چک" در توضیحات بود
+            if any(w in desc_str for w in ["چک", "چك"]):
+                source_type = "Check"
+            else:
+                source_type = "Other"
 
-    df = raw.iloc[header_bottom_idx + 1:].copy()
-    df.columns = combined_cols
-    df = df.reset_index(drop=True)
-    df = df.dropna(how="all")  # حذف ردیف‌های کاملاً خالی
+        rec = {
+            "PaymentID": str(payment_id).strip() if pd.notna(payment_id) else None,
+            "PaymentDate": payment_date,
+            "Amount": amt,
+            "SourceType": source_type,
+            "CustomerCode": str(cust_code).strip() if has_code else None,
+            "CustomerName": str(cust_name).strip() if pd.notna(cust_name) else None,
+            "Description": desc_str,
+        }
+        records.append(rec)
 
-    # پیدا کردن اندیس ستون‌های مهم
-    date_idx = _find_date_col_idx(df)
-    acc_idx = _find_account_code_idx(df)
-    cust_idx = _find_customer_name_idx(df)
-    desc_idx = _find_desc_idx(df)
-    dep_idx, _ = _find_deposit_withdraw_idx(df)
-    doc_idx = _find_doc_no_idx(df)
+    if not records:
+        return pd.DataFrame(
+            columns=[
+                "PaymentID",
+                "PaymentDate",
+                "Amount",
+                "SourceType",
+                "CustomerCode",
+                "CustomerName",
+                "Description",
+            ]
+        )
 
-    if dep_idx is None:
-        raise ValueError(
-            "در هدر فایل پرداخت‌ها ستونی با عنوان «واریزی» پیدا نشد.")
+    df = pd.DataFrame(records)
+    return df.reset_index(drop=True)
 
-    # حذف ردیف‌هایی که در ستون تاریخ‌شان «جمع» نوشته شده (مثل «جمع نقل از قبل»)
-    if date_idx is not None:
-        date_series = df.iloc[:, date_idx].astype(str).apply(_normalize_str)
-        df = df[~date_series.str.contains("جمع")]
 
-    # ساخت دیتافریم استاندارد
-    out = pd.DataFrame()
+def _load_simple_layout(file_obj: IO[Any]) -> pd.DataFrame:
+    """
+    حالت پشتیبان:
+    اگر فایل اصلاً شبیه نمونه‌ی بانکی نبود، فرض می‌کنیم یک اکسل ساده با هدرهای مستقیم است.
+    """
+    file_obj.seek(0)
+    df = pd.read_excel(file_obj)
 
-    if date_idx is not None:
-        out["PaymentDate"] = df.iloc[:, date_idx]
+    # نرمال‌سازی اسامی ستون‌ها
+    rename_map = {}
+    for col in df.columns:
+        name = str(col).strip()
+        if name in ["PaymentDate", "تاریخ", "تاريخ", "تاریخ سند", "تاريخ سند"]:
+            rename_map[col] = "PaymentDate"
+        elif name in ["Amount", "مبلغ", "واريزي", "واریزی", "بستانكار", "بستانکار"]:
+            rename_map[col] = "Amount"
+        elif name in ["CustomerCode", "کد طرف حساب", "كد طرف حساب", "کد مشتری"]:
+            rename_map[col] = "CustomerCode"
+        elif name in ["Description", "شرح", "توضيحات", "توضیحات"]:
+            rename_map[col] = "Description"
+        elif name in ["PaymentID", "شماره سند", "شماره", "شماره تراکنش"]:
+            rename_map[col] = "PaymentID"
 
-    # مبلغ = ستون «واریزی»
-    dep_series = df.iloc[:, dep_idx]
-    dep_numeric = pd.to_numeric(
-        dep_series.astype(str).str.replace(",", ""),
-        errors="coerce",
-    )
-    out["Amount"] = dep_numeric
+    df = df.rename(columns=rename_map)
 
-    if doc_idx is not None:
-        out["PaymentID"] = df.iloc[:, doc_idx]
+    for c in ["PaymentID", "PaymentDate", "Amount", "CustomerCode", "Description"]:
+        if c not in df.columns:
+            df[c] = None
 
-    if acc_idx is not None:
-        out["CustomerCode"] = df.iloc[:, acc_idx]
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+    df = df[df["Amount"] > 0]
 
-    if cust_idx is not None:
-        out["CustomerName"] = df.iloc[:, cust_idx]
+    # پیش‌فرض: پرداخت از حساب مشتری
+    df["SourceType"] = "CustomerAccount"
 
-    if desc_idx is not None:
-        out["Description"] = df.iloc[:, desc_idx]
+    cols = ["PaymentID", "PaymentDate", "Amount",
+            "SourceType", "CustomerCode", "Description"]
+    return df[cols].reset_index(drop=True)
 
-    # همه‌ی این ردیف‌ها ماهیتاً «واریز از حساب مشتری» هستند
-    out["SourceType"] = "CustomerAccount"
 
-    # حذف ردیف‌های بدون مبلغ
-    out = out[out["Amount"].notna() & (out["Amount"] != 0)]
+def load_payments_excel(file_obj: IO[Any]) -> pd.DataFrame:
+    """
+    لودر اصلی پرداخت‌ها:
+    - اول تلاش می‌کند فرمت ویژه‌ی دفتر حساب بانکی (مثل پرداخت.xlsx) را تشخیص دهد.
+    - اگر نشد، می‌رود روی حالت ساده با هدر معمولی.
+    """
+    # اول سعی می‌کنیم فرمت بانکی را بخوانیم
+    df_special = _load_special_bank_layout(file_obj)
+    if not df_special.empty:
+        return df_special
 
-    return out.reset_index(drop=True)
+    # اگر جواب نداد، می‌رویم سراغ حالت ساده
+    return _load_simple_layout(file_obj)
