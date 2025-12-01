@@ -370,10 +370,17 @@ def extract_customer_for_payment(row, checks_df: pd.DataFrame, name_map: dict):
 
     # 3) تطبیق بر اساس نام واریز / برداشت کننده
     name_val = None
-    for col in ["CustomerName", "PayerName"]:
-        if col in row.index:
+    # 👈 اینجا ستون‌های محتمل برای نام مشتری رو چک می‌کنیم
+    for col in [
+        "CustomerName",
+        "PayerName",
+        "واريز يا برداشت كننده",
+        "واریز یا برداشت کننده",
+    ]:
+        if col in row.index and pd.notna(row.get(col)):
             name_val = row.get(col)
             break
+
     if name_val is not None:
         nm = normalize_name(name_val)
         if nm in name_map:
