@@ -611,13 +611,7 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
     return sales_df
 
 
-def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group_col):
-    """
-    هسته‌ی محاسبات:
-    - آماده‌سازی فروش‌ها و پرداخت‌ها
-    - تسویه فاکتورها طبق اولویت (نقدی → عادی، قدیمی → جدید)
-    - محاسبه پورسانت
-    """
+def compute_commissions(sales_raw, payments_raw, checks_raw, commission_map, group_col):
     sales_df = prepare_sales(sales_raw, commission_map, group_col)
 
     checks_df = (
