@@ -1,4 +1,6 @@
 from __future__ import annotations
+from fastapi.templating import Jinja2Templates
+from pathlib import Path
 
 from app.services.sales_excel_loader import load_sales_excel
 from app.services.payments_excel_loader import load_payments_excel
@@ -238,6 +240,8 @@ def name_key_for_matching(s: str) -> str:
 # ------------------ کانفیگ برنامه ------------------ #
 
 app = FastAPI()
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 LAST_UPLOAD = {
     "sales": None,
@@ -1065,211 +1069,15 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
 # ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    # ✅ نوار تب‌ها
-    nav_html = build_nav("main")
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>محاسبه پورسانت فروش</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>محاسبه پورسانت فروش</h1>
-                <p>مرحله ۱ از ۲ – لطفاً فایل‌های اکسل فروش، پرداخت‌ها و در صورت وجود چک‌ها را انتخاب کن.</p>
-
-                <div class="summary-grid">
-
-                    <!-- فروش‌ها -->
-                    <div class="summary-card summary-sales">
-                        <div class="summary-card-header">
-                            <div class="summary-title">
-                                <div class="summary-icon">🧾</div>
-                                <div>
-                                    <div class="summary-title-main">فایل فروش‌ها</div>
-                                    <div class="summary-title-sub">گزارش فاکتورهای فروش از نرم‌افزار حسابداری</div>
-                                </div>
-                            </div>
-                            <button type="button" class="pill-button" data-toggle="hint" data-target="sales-hint">
-                                نمایش راهنما
-                            </button>
-                        </div>
-                        <div id="sales-hint" class="summary-card-body hint-hidden">
-                            <div class="hint-title">ستون‌های پیشنهادی (یا معادل فارسی‌شان):</div>
-
-                            <div class="pill-section">
-                                <div class="pill-section-title">ستون‌های اصلی فاکتور</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">InvoiceID (شماره فاکتور / شماره سند)</span>
-                                    <span class="badge-pill">InvoiceDate (تاریخ فاکتور – شمسی)</span>
-                                    <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
-                                    <span class="badge-pill">CustomerName (نام مشتری / طرف حساب)</span>
-                                    <span class="badge-pill">Amount (جمع کل فاکتور)</span>
-                                </div>
-                            </div>
-
-                            <div class="pill-section">
-                                <div class="pill-section-title">ستون‌های مربوط به کالا</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">ProductCode (کد کالا)</span>
-                                    <span class="badge-pill">ProductName (نام کالا)</span>
-                                    <span class="badge-pill">ProductGroup (گروه کالا – برای تعیین پورسانت)</span>
-                                </div>
-                            </div>
-
-                            <div class="pill-section">
-                                <div class="pill-section-title">ستون‌های اختیاری</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">Salesperson (نام ویزیتور)</span>
-                                    <span class="badge-pill">DueDate (تاریخ سررسید، اگر در خود سیستم دارید)</span>
-                                </div>
-                            </div>
-
-                            <p class="hint-note">
-                                لازم نیست اسم ستون‌ها دقیقاً همین باشد؛ لودر فروش تلاش می‌کند اسم‌های رایج فارسی
-                                (مثل «شماره فاکتور»، «نام طرف حساب»، «جمع کل» و …) را به این ستون‌های استاندارد تبدیل کند.
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- پرداخت‌ها -->
-                    <div class="summary-card summary-payments">
-                        <div class="summary-card-header">
-                            <div class="summary-title">
-                                <div class="summary-icon">🏦</div>
-                                <div>
-                                    <div class="summary-title-main">فایل پرداخت‌ها</div>
-                                    <div class="summary-title-sub">خروجی دفتر حساب بانکی / دریافت‌ها</div>
-                                </div>
-                            </div>
-                            <button type="button" class="pill-button" data-toggle="hint" data-target="payments-hint">
-                                نمایش راهنما
-                            </button>
-                        </div>
-                        <div id="payments-hint" class="summary-card-body hint-hidden">
-                            <div class="hint-title">فرمت‌های رایج که برنامه پشتیبانی می‌کند:</div>
-
-                            <div class="pill-section">
-                                <div class="pill-section-title">۱) دفتر حساب بانکی (مثل پرداخت.xlsx که فرستادی)</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">تاریخ</span>
-                                    <span class="badge-pill">شماره / شماره سند</span>
-                                    <span class="badge-pill">نوع</span>
-                                    <span class="badge-pill">واریزی</span>
-                                    <span class="badge-pill">برداشتی</span>
-                                    <span class="badge-pill">کد طرف حساب</span>
-                                    <span class="badge-pill">واریز یا برداشت کننده (نام مشتری)</span>
-                                    <span class="badge-pill">توضیحات</span>
-                                </div>
-                                <p class="hint-note">
-                                    لودر پرداخت‌ها از روی این ستون‌ها، ردیف‌های «واریزی» را پیدا می‌کند و آن‌ها را
-                                    به فرم استاندارد تبدیل می‌کند.
-                                </p>
-                            </div>
-
-                            <div class="pill-section">
-                                <div class="pill-section-title">۲) فرم ساده با هدر مستقیم</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">PaymentDate (یا «تاریخ» / «تاریخ سند»)</span>
-                                    <span class="badge-pill">Amount (یا «مبلغ» / «واریزی» / «بستانکار»)</span>
-                                    <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
-                                    <span class="badge-pill">CustomerName (اختیاری)</span>
-                                    <span class="badge-pill">Description (شرح / توضیحات)</span>
-                                    <span class="badge-pill">PaymentID (شماره سند / شماره تراکنش)</span>
-                                </div>
-                            </div>
-
-                            <p class="hint-note">
-                                در نهایت داخل برنامه همه‌ی پرداخت‌ها به شکل استاندارد
-                                <b>PaymentID, PaymentDate, Amount, CustomerCode, CustomerName, Description</b>
-                                ذخیره می‌شوند.
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- چک‌ها -->
-                    <div class="summary-card summary-checks">
-                        <div class="summary-card-header">
-                            <div class="summary-title">
-                                <div class="summary-icon">💳</div>
-                                <div>
-                                    <div class="summary-title-main">فایل چک‌ها (اختیاری)</div>
-                                    <div class="summary-title-sub">اگر می‌خواهی پرداخت‌های نوع «چک» را دقیق به مشتری وصل کنیم</div>
-                                </div>
-                            </div>
-                            <button type="button" class="pill-button" data-toggle="hint" data-target="checks-hint">
-                                نمایش راهنما
-                            </button>
-                        </div>
-                        <div id="checks-hint" class="summary-card-body hint-hidden">
-                            <div class="pill-section">
-                                <div class="pill-section-title">ستون‌های پیشنهادی:</div>
-                                <div class="pill-row">
-                                    <span class="badge-pill">CheckNumber (شماره چک)</span>
-                                    <span class="badge-pill">CustomerCode (کد مشتری / کد طرف حساب)</span>
-                                    <span class="badge-pill">CustomerName (نام صاحب چک)</span>
-                                    <span class="badge-pill">Amount (مبلغ چک)</span>
-                                    <span class="badge-pill">BankName (نام بانک)</span>
-                                    <span class="badge-pill">Description (توضیحات اضافی)</span>
-                                </div>
-                            </div>
-                            <p class="hint-note">
-                                اگر در توضیحات پرداخت‌ها شماره‌ی چک نوشته شده باشد، برنامه از روی ستون <b>CheckNumber</b>
-                                می‌تواند پرداخت‌های نوع «Check» را به مشتری درست وصل کند.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                <form action="/upload-all" method="post" enctype="multipart/form-data">
-                    <div class="form-row">
-                        <label>فایل اکسل فروش‌ها</label><br/>
-                        <input type="file" name="sales_file" accept=".xlsx,.xls" required />
-                        <small>این فایل مبنای محاسبه پورسانت است (خروجی فاکتورهای فروش).</small>
-                    </div>
-
-                    <div class="form-row">
-                        <label>فایل اکسل پرداخت‌ها</label><br/>
-                        <input type="file" name="payments_file" accept=".xlsx,.xls" required />
-                        <small>پرداخت‌های نقدی و واریزی‌ها / وصول چک‌ها در این فایل قرار دارند.</small>
-                    </div>
-
-                    <div class="form-row">
-                        <label>فایل اکسل چک‌ها (اختیاری)</label><br/>
-                        <input type="file" name="checks_file" accept=".xlsx,.xls" />
-                        <small>برای اتصال پرداخت‌هایی که در توضیحات‌شان شماره چک آمده استفاده می‌شود.</small>
-                    </div>
-
-                    <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>
-                </form>
-            </div>
-
-            <script>
-            document.addEventListener('DOMContentLoaded', function () {{
-                document.querySelectorAll('[data-toggle="hint"]').forEach(function (btn) {{
-                    btn.addEventListener('click', function () {{
-                        var targetId = btn.getAttribute('data-target');
-                        var panel = document.getElementById(targetId);
-                        if (!panel) return;
-                        panel.classList.toggle('hint-hidden');
-                        if (panel.classList.contains('hint-hidden')) {{
-                            btn.textContent = 'نمایش راهنما';
-                        }} else {{
-                            btn.textContent = 'بستن راهنما';
-                        }}
-                    }});
-                }});
-            }});
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+async def index(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "title": "محاسبه پورسانت فروش",
+            "active_tab": "main",
+        },
+    )
 
 
 @app.post("/upload-all", response_class=HTMLResponse)
