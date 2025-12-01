@@ -520,6 +520,74 @@ hr {
     margin: 24px 0;
 }
 </style>
+/* ---------------- تب‌ها (برای صفحه تنظیم گروه‌ها و تخصیص کالاها) ---------------- */
+
+.tabs-container {
+    margin-top: 24px;
+}
+
+.tab-header-row {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 12px;
+    padding-bottom: 2px;
+}
+
+.tab-btn {
+    border: none;
+    background: transparent;
+    padding: 8px 14px;
+    border-radius: 999px 999px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab-btn:hover {
+    color: #111827;
+    background: #f3f4ff;
+}
+
+.tab-btn.active {
+    color: #111827;
+    background: #eef2ff;
+    font-weight: 600;
+}
+
+.tab-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+}
+
+.tab-content {
+    margin-top: 4px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+/* اگر تب‌ها داخل کارت جدا باشند، کمی فاصله بدهیم */
+.tab-card {
+    margin-top: 18px;
+    background: #f9fafb;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 12px 14px;
+}
 """
 
 
