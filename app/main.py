@@ -342,49 +342,117 @@ def build_sales_name_map(sales_df: pd.DataFrame) -> dict:
     return name_map
 
 
-def extract_customer_for_payment(row, checks_df: pd.DataFrame, name_map: dict):
+def normalize_persian_name(s) -> str:
+    """
+    نرمال‌سازی اسم فارسی:
+    - یکسان کردن حروف ي/ی و ك/ک و ...
+    - حذف حرکات
+    - یکسان کردن فاصله‌ها
+    - حذف کاراکترهای تزئینی
+    """
+    if s is None:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+
+    # حروف عربی → فارسی
+    replacements = {
+        "ي": "ی",
+        "ك": "ک",
+        "ۀ": "ه",
+        "ة": "ه",
+        "ؤ": "و",
+        "إ": "ا",
+        "أ": "ا",
+        "ٱ": "ا",
+        "ئ": "ی",
+        "‌": " ",   # نیم‌فاصله
+    }
+    for src, dst in replacements.items():
+        s = s.replace(src, dst)
+
+    # حذف حرکات و علائم اضافی
+    s = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED]", "", s)
+
+    # حذف یک‌سری نشانه‌ها / جایگزینی با فاصله
+    for ch in ["،", ",", "-", "_", "ـ"]:
+        s = s.replace(ch, " ")
+
+    # چند فاصله → یک فاصله
+    s = re.sub(r"\s+", " ", s).strip()
+
+    # به حروف کوچک (برای حروف لاتین)
+    s = s.lower()
+    return s
+
+
+def build_name_code_mapping(sales_df: pd.DataFrame) -> dict[str, str]:
+    """
+    از روی جدول فروش، map می‌سازد:
+        نام نرمال‌شده → کد مشتری
+    فقط وقتی که آن نام دقیقاً به *یک* کد منجر شود.
+    """
+    if "CustomerName" not in sales_df.columns or "CustomerCode" not in sales_df.columns:
+        return {}
+
+    tmp = sales_df[["CustomerName", "CustomerCode"]].dropna()
+
+    name_to_codes: dict[str, set[str]] = {}
+    for _, row in tmp.iterrows():
+        name = normalize_persian_name(row["CustomerName"])
+        code = str(row["CustomerCode"]).strip()
+        if not name or not code:
+            continue
+        if name not in name_to_codes:
+            name_to_codes[name] = set()
+        name_to_codes[name].add(code)
+
+    # فقط نام‌هایی که دقیقاً یک کد دارند را نگه می‌داریم
+    result: dict[str, str] = {}
+    for name, codes in name_to_codes.items():
+        if len(codes) == 1:
+            result[name] = next(iter(codes))
+
+    return result
+
+
+def extract_customer_for_payment(
+    row,
+    checks_df: pd.DataFrame,
+    name_code_map: dict[str, str] | None = None,
+):
     """
     تشخیص کد مشتری برای هر پرداخت:
-    1) اول از روی CustomerCode (اگر باشد)
-    2) بعد از روی شماره چک در توضیحات (اگر در فایل چک موجود باشد)
-    3) در نهایت از روی نام مشتری (واریز یا برداشت کننده) با تطبیق متنی
+    1) اگر CustomerCode پر بود، همان
+    2) اگر نوع Check بود، از روی شماره چک در فایل چک‌ها
+    3) در نهایت، اگر اسم مشتری داریم و در map نام→کد باشد، از روی اسم
     """
-    # 1) کد طرف حساب اگر هست
-    code = None
-    for col in ["CustomerCode", "PartyCode", "AccountCode"]:
-        if col in row.index:
-            code = canonicalize_code(row.get(col))
-            if code:
-                return code
+    stype = row.get("SourceType")
+    code = row.get("CustomerCode")
+    name = row.get("CustomerName")
 
-    # 2) جستجوی شماره چک در توضیحات
-    desc = str(row.get("Description") or "")
-    m = re.search(r"(CHK-\d+)", desc)
-    if m is not None and not checks_df.empty and "CheckNumber" in checks_df.columns:
-        check_number = m.group(1)
-        match = checks_df.loc[checks_df["CheckNumber"] == check_number]
-        if not match.empty:
-            chk_code = canonicalize_code(match.iloc[0].get("CustomerCode"))
-            if chk_code:
-                return chk_code
+    # 1) اگر خود کد طرف حساب مشخص است
+    if pd.notna(code) and str(code).strip() != "":
+        return str(code).strip()
 
-    # 3) تطبیق بر اساس نام واریز / برداشت کننده
-    name_val = None
-    # 👈 اینجا ستون‌های محتمل برای نام مشتری رو چک می‌کنیم
-    for col in [
-        "CustomerName",
-        "PayerName",
-        "واريز يا برداشت كننده",
-        "واریز یا برداشت کننده",
-    ]:
-        if col in row.index and pd.notna(row.get(col)):
-            name_val = row.get(col)
-            break
+    # 2) اگر پرداخت از نوع چک است، سعی می‌کنیم از روی فایل چک‌ها پیدا کنیم
+    if stype == "Check":
+        desc = str(row.get("Description") or "")
+        m = re.search(r"(CHK-\d+)", desc)
+        if m and "CheckNumber" in checks_df.columns:
+            check_number = m.group(1)
+            match = checks_df.loc[checks_df["CheckNumber"] == check_number]
+            if not match.empty:
+                return str(match.iloc[0]["CustomerCode"])
 
-    if name_val is not None:
-        nm = normalize_name(name_val)
-        if nm in name_map:
-            return name_map[nm]
+    # 3) در هر حال، اگر اسم داریم و map داریم، از روی اسم مچ کنیم
+    if name_code_map is not None and pd.notna(name):
+        norm = normalize_persian_name(name)
+        if norm:
+            mapped = name_code_map.get(norm)
+            if mapped:
+                return mapped
 
     return None
 
@@ -396,155 +464,44 @@ def prepare_payments(
 ) -> pd.DataFrame:
     """
     آماده‌سازی دیتافریم پرداخت‌ها و وصل کردن هر پرداخت به یک مشتری.
-    - تبدیل تاریخ پرداخت (شمسی/میلادی) به Timestamp
-    - پیدا کردن ستون مبلغ (حتی اگر اسمش Amount نباشد)
-    - تشخیص مشتری هر پرداخت (بر اساس کد، چک، یا نام مشتری)
+    - تبدیل تاریخ‌ها به میلادی (از شمسی یا میلادی)
+    - تبدیل مبلغ به float
+    - پر کردن ResolvedCustomer بر اساس:
+        * CustomerCode
+        * فایل چک‌ها (برای نوع Check)
+        * نام مشتری (اگر کد نداشت و نام یکتا بود)
     """
     payments_df = payments_df.copy()
 
-    # ---- تاریخ پرداخت ----
+    # تاریخ
     if "PaymentDate" in payments_df.columns:
         payments_df["PaymentDate"] = payments_df["PaymentDate"].apply(
             parse_jalali_or_gregorian
         )
 
-    # ---- پیدا کردن ستون مبلغ ----
-    amount_col = None
+    # مبلغ
+    if "Amount" not in payments_df.columns:
+        raise ValueError("در فایل پرداخت‌ها ستونی به نام 'Amount' پیدا نشد.")
+    payments_df["Amount"] = payments_df["Amount"].astype(float)
 
-    # 1) اگر خود ستون Amount هست، همونو می‌گیریم
-    if "Amount" in payments_df.columns:
-        amount_col = "Amount"
-    else:
-        # 2) سعی می‌کنیم از روی اسم ستون‌ها حدس بزنیم
-        def norm_col(c: str) -> str:
-            s = str(c).strip()
-            s = s.replace("ي", "ی").replace("ك", "ک")
-            s = re.sub(r"\s+", " ", s)
-            return s.lower()
+    # مطمئن شو ستون‌های CustomerCode / CustomerName وجود دارند
+    if "CustomerCode" not in payments_df.columns:
+        payments_df["CustomerCode"] = None
+    if "CustomerName" not in payments_df.columns:
+        payments_df["CustomerName"] = None
 
-        for col in payments_df.columns:
-            nc = norm_col(col)
-            # هر ستونی که توی اسمش «مبلغ» یا چیزهای شبیه به این باشد
-            if (
-                "مبلغ" in nc
-                or "بدهي" in nc
-                or "بدهکار" in nc
-                or "بستانکار" in nc
-                or "پرداخت" in nc
-                or "واریز" in nc
-            ):
-                amount_col = col
-                break
+    # map نام→کد از روی فروش‌ها
+    name_code_map = build_name_code_mapping(sales_df)
 
-    if amount_col is None:
-        # اگر باز هم تشخیص ندادیم، به‌جای خطای مبهم، روشن توضیح بده
-        cols_str = ", ".join(str(c) for c in payments_df.columns)
-        raise ValueError(
-            "در فایل پرداخت‌ها نتوانستم ستون مبلغ را پیدا کنم.\n"
-            "یا ستونی به نام 'Amount' بساز، یا نام یکی از ستون‌ها را شامل واژه‌هایی مثل «مبلغ»، "
-            "«بدهکار»، «بستانکار»، «پرداخت»، «واریز» بگذار.\n"
-            f"ستون‌های فعلی فایل پرداخت‌ها:\n{cols_str}"
-        )
-
-    # تبدیل ستون تشخیص‌داده شده به Amount
-    payments_df["Amount"] = pd.to_numeric(
-        payments_df[amount_col], errors="coerce"
-    ).fillna(0)
-
-    # ---- ساخت map نام مشتری از روی فروش‌ها (اگر قبلاً نوشتی همون رو نگه دار) ----
-    # اگر قبلاً build_sales_name_map را تعریف کرده‌ای، از همان استفاده کن.
-    # اگر نداری، یک نسخه ساده:
-    def normalize_name(value):
-        s = str(value)
-        s = s.replace("ي", "ی").replace("ك", "ک")
-        s = re.sub(r"\s+", " ", s)
-        return s.strip().lower()
-
-    def canonicalize_code(v):
-        if pd.isna(v):
-            return None
-        s = str(v).strip()
-        if not s:
-            return None
-        # حذف فاصله و کاراکترهای غیرعددی
-        cleaned = re.sub(r"\s+", "", s)
-        return cleaned
-
-    def build_sales_name_map(sales_df_inner: pd.DataFrame) -> dict:
-        m = {}
-        if "CustomerCode" not in sales_df_inner.columns:
-            return m
-        for _, r in sales_df_inner.iterrows():
-            code = canonicalize_code(r.get("CustomerCode"))
-            if not code:
-                continue
-
-            name_val = None
-            for col in ["CustomerName", "نام مشتری", "نام مشتري"]:
-                if col in sales_df_inner.columns and pd.notna(r.get(col)):
-                    name_val = r.get(col)
-                    break
-
-            if name_val:
-                nm = normalize_name(name_val)
-                if nm and nm not in m:
-                    m[nm] = code
-        return m
-
-    name_map = build_sales_name_map(sales_df)
-
-    # ---- تشخیص مشتری هر پرداخت ----
-    def extract_customer_for_payment(row):
-        """
-        1) اگر کد مشتری / حساب در خود ردیف پرداخت باشد، همان را می‌گیریم
-        2) اگر نوع پرداخت از نوع Check باشد و در توضیحات شماره چک باشد، از فایل چک کد مشتری را می‌گیریم
-        3) اگر نام «واريز يا برداشت كننده» / CustomerName وجود داشته باشد، با map نام‌ها match می‌کنیم
-        """
-        # 1) کد مشتری / حساب اگر موجود است
-        for col in ["CustomerCode", "PartyCode", "AccountCode", "کد حساب"]:
-            if col in row.index and pd.notna(row.get(col)):
-                return canonicalize_code(row.get(col))
-
-        # 2) بررسی شماره چک در توضیحات
-        desc = str(row.get("Description") or "")
-        m_chk = re.search(r"(CHK-\d+)", desc)
-        if (
-            m_chk is not None
-            and not checks_df.empty
-            and "CheckNumber" in checks_df.columns
-        ):
-            check_number = m_chk.group(1)
-            match = checks_df.loc[checks_df["CheckNumber"] == check_number]
-            if not match.empty:
-                chk_code = canonicalize_code(match.iloc[0].get("CustomerCode"))
-                if chk_code:
-                    return chk_code
-
-        # 3) match نام مشتری (واريز يا برداشت كننده)
-        name_val = None
-        for col in [
-            "CustomerName",
-            "PayerName",
-            "واريز يا برداشت كننده",
-            "واریز یا برداشت کننده",
-        ]:
-            if col in row.index and pd.notna(row.get(col)):
-                name_val = row.get(col)
-                break
-
-        if name_val is not None:
-            nm = normalize_name(name_val)
-            if nm in name_map:
-                return name_map[nm]
-
-        return None
-
+    # تشخیص مشتری برای هر ردیف پرداخت
     payments_df["ResolvedCustomer"] = payments_df.apply(
-        extract_customer_for_payment, axis=1
+        lambda row: extract_customer_for_payment(
+            row, checks_df, name_code_map),
+        axis=1,
     )
 
     # فقط پرداخت‌هایی که مشتری‌شان مشخص شده است
-    payments_df = payments_df[payments_df["ResolvedCustomer"].notna()]
+    payments_df = payments_df[payments_df["ResolvedCustomer"].notna()].copy()
 
     return payments_df
 
@@ -661,13 +618,15 @@ def compute_commissions(sales_raw, payments_raw, checks_raw, group_config, group
     - تسویه فاکتورها طبق اولویت (نقدی → عادی، قدیمی → جدید)
     - محاسبه پورسانت
     """
-    sales_df = prepare_sales(sales_raw, group_config, group_col)
+    sales_df = prepare_sales(sales_raw, commission_map, group_col)
 
     checks_df = (
         checks_raw.copy()
         if checks_raw is not None and not checks_raw.empty
         else pd.DataFrame()
     )
+
+    # 👈 حتماً sales_df را بده به prepare_payments
     payments_df = prepare_payments(payments_raw, checks_df, sales_df)
 
     # اگر پرداختی نداریم، فقط جدول پورسانت صفر برگردان
