@@ -298,7 +298,9 @@ label {
     font-size: 13px;
 }
 input[type="file"],
-input[type="number"] {
+input[type="number"],
+input[type="text"],
+select {
     width: 100%;
     padding: 7px 9px;
     border-radius: 10px;
@@ -309,7 +311,9 @@ input[type="number"] {
     background-color: #f9fafb;
 }
 input[type="file"]:focus,
-input[type="number"]:focus {
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus {
     outline: none;
     border-color: #2563eb;
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
@@ -323,7 +327,37 @@ small {
     color: #6b7280;
 }
 
-/* کارت‌های راهنما برای ساختار فایل‌ها */
+/* ---------------- نوار بالای صفحه (سه تب اصلی) ---------------- */
+
+.navbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    border-radius: 999px;
+    background: #f3f4ff;
+    padding: 4px;
+}
+.navbar a {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: #4b5563;
+    text-decoration: none;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.navbar a:hover {
+    background: #e5e7ff;
+    color: #111827;
+}
+.navbar a.active {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.45);
+}
+
+/* ---------------- کارت‌های راهنمای صفحه اصلی ---------------- */
+
 .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -460,7 +494,8 @@ small {
     display: none;
 }
 
-/* جدول‌ها و بقیه چیزها */
+/* ---------------- جدول‌ها ---------------- */
+
 .table-wrapper {
     overflow-x: auto;
     margin-top: 8px;
@@ -488,6 +523,9 @@ small {
 .table-wrapper tr:hover td {
     background: #eef2ff;
 }
+
+/* ---------------- بج‌ها ---------------- */
+
 .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -504,6 +542,87 @@ small {
     color: #1d4ed8;
     border: 1px solid #bfdbfe;
 }
+
+/* ---------------- پیام‌های موفق/خطا ---------------- */
+
+.message {
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    margin: 10px 0;
+}
+.message-success {
+    background: #ecfdf5;
+    border: 1px solid #6ee7b7;
+    color: #065f46;
+}
+.message-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+/* ---------------- تب‌های داخلی (اگر جایی استفاده شوند) ---------------- */
+
+.tabs-container {
+    margin-top: 24px;
+}
+.tab-header-row {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 12px;
+    padding-bottom: 2px;
+}
+.tab-btn {
+    border: none;
+    background: transparent;
+    padding: 8px 14px;
+    border-radius: 999px 999px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.tab-btn:hover {
+    color: #111827;
+    background: #f3f4ff;
+}
+.tab-btn.active {
+    color: #111827;
+    background: #eef2ff;
+    font-weight: 600;
+}
+.tab-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+}
+.tab-content {
+    margin-top: 4px;
+}
+.tab-pane {
+    display: none;
+}
+.tab-pane.active {
+    display: block;
+}
+.tab-card {
+    margin-top: 18px;
+    background: #f9fafb;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 12px 14px;
+}
+
+/* ---------------- سایر ---------------- */
+
 .footer-link {
     display: inline-block;
     margin-top: 16px;
@@ -519,75 +638,10 @@ hr {
     border-top: 1px solid #e5e7eb;
     margin: 24px 0;
 }
+.checkbox-center {
+    text-align: center;
+}
 </style>
-/* ---------------- تب‌ها (برای صفحه تنظیم گروه‌ها و تخصیص کالاها) ---------------- */
-
-.tabs-container {
-    margin-top: 24px;
-}
-
-.tab-header-row {
-    display: flex;
-    gap: 8px;
-    border-bottom: 1px solid #e5e7eb;
-    margin-bottom: 12px;
-    padding-bottom: 2px;
-}
-
-.tab-btn {
-    border: none;
-    background: transparent;
-    padding: 8px 14px;
-    border-radius: 999px 999px 0 0;
-    font-size: 12px;
-    color: #6b7280;
-    cursor: pointer;
-    position: relative;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tab-btn:hover {
-    color: #111827;
-    background: #f3f4ff;
-}
-
-.tab-btn.active {
-    color: #111827;
-    background: #eef2ff;
-    font-weight: 600;
-}
-
-.tab-btn.active::after {
-    content: "";
-    position: absolute;
-    left: 10%;
-    right: 10%;
-    bottom: -1px;
-    height: 2px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #2563eb, #7c3aed);
-}
-
-.tab-content {
-    margin-top: 4px;
-}
-
-.tab-pane {
-    display: none;
-}
-
-.tab-pane.active {
-    display: block;
-}
-
-/* اگر تب‌ها داخل کارت جدا باشند، کمی فاصله بدهیم */
-.tab-card {
-    margin-top: 18px;
-    background: #f9fafb;
-    border-radius: 14px;
-    border: 1px solid #e5e7eb;
-    padding: 12px 14px;
-}
 """
 
 
