@@ -1773,7 +1773,7 @@ async def group_config_page():
     rows = list(current_cfg.items())
     rows_html = ""
 
-    # ردیف‌های موجود
+    # فقط ردیف‌های موجود (دیگه ۵ سطر خالی اضافه نمی‌کنیم)
     for idx, (gname, cfg) in enumerate(rows):
         percent_human = (cfg.get("percent") or 0) * 100
         due_days = cfg.get("due_days")
@@ -1788,22 +1788,6 @@ async def group_config_page():
             <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
             <td class="checkbox-center">
                 <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
-            </td>
-        </tr>
-        """
-
-    # چند ردیف خالی اولیه
-    extra_rows = 5
-    base_idx = len(rows)
-    for j in range(extra_rows):
-        idx = base_idx + j
-        rows_html += f"""
-        <tr>
-            <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
-            <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
-            <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
-            <td class="checkbox-center">
-                <input type="checkbox" name="cfg_is_cash" value="{idx}" />
             </td>
         </tr>
         """
@@ -1859,7 +1843,7 @@ async def group_config_page():
                         <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
                         <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
                         <td class="checkbox-center">
-                            <input type="checkbox" name="cfg_is_cash" value="${idx}" />
+                            <input type="checkbox" name="cfg_is_cash" value="${{idx}}" />
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -1887,7 +1871,7 @@ async def group_config_save(request: Request):
         if not g_key:
             continue
 
-        # درصد
+        # درصد (به صورت انسانی: 2 یعنی 2٪)
         percent_val = 0.0
         p_str = str(p).strip()
         if p_str:
@@ -1933,7 +1917,7 @@ async def group_config_save(request: Request):
         </div>
         """
 
-    # پس از ذخیره، دوباره فرم را با داده‌های جدید نمایش بده
+    # دوباره فرم را با داده‌های جدید نمایش بده
     current_cfg = load_default_group_config()
     rows = list(current_cfg.items())
     rows_html = ""
@@ -1951,21 +1935,6 @@ async def group_config_save(request: Request):
             <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
             <td class="checkbox-center">
                 <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
-            </td>
-        </tr>
-        """
-
-    extra_rows = 5
-    base_idx = len(rows)
-    for j in range(extra_rows):
-        idx = base_idx + j
-        rows_html += f"""
-        <tr>
-            <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
-            <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
-            <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
-            <td class="checkbox-center">
-                <input type="checkbox" name="cfg_is_cash" value="{idx}" />
             </td>
         </tr>
         """
@@ -2018,7 +1987,7 @@ async def group_config_save(request: Request):
                         <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
                         <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
                         <td class="checkbox-center">
-                            <input type="checkbox" name="cfg_is_cash" value="${idx}" />
+                            <input type="checkbox" name="cfg_is_cash" value="${{idx}}" />
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -2051,6 +2020,23 @@ async def group_items_page():
             if code and grp:
                 code_to_group[code] = grp
 
+    # گزینه‌های منوی کشویی گروه کالا (برای JS و ردیف‌های دستی)
+    base_options_html = '<option value="">-- بدون گروه --</option>'
+    for gname, cfg in default_group_cfg.items():
+        percent = (cfg.get("percent") or 0) * 100
+        due_days = cfg.get("due_days")
+        is_cash = cfg.get("is_cash", False)
+        label_parts = [gname, f"{percent:.2f}٪"]
+        if due_days is not None:
+            label_parts.append(f"{due_days} روز")
+        if is_cash:
+            label_parts.append("نقدی")
+        label = " | ".join(label_parts)
+        base_options_html += f'<option value="{gname}">{label}</option>'
+
+    # برای جاوااسکریپت (بدون خط جدید که داخل بک‌تیک راحت بنشیند)
+    product_group_options_js = base_options_html.replace("\n", "")
+
     df_sales = LAST_UPLOAD["sales"]
 
     # آماده‌سازی ردیف‌ها
@@ -2062,7 +2048,7 @@ async def group_items_page():
         info_html = """
         <p class="message message-error">
             هنوز هیچ فایل فروشی در تب «محاسبه پورسانت» آپلود نشده است.
-            برای این‌که لیست کالاها را از روی فروش‌ها ببینیم، لطفاً اول در صفحهٔ اصلی فایل فروش را آپلود کن.
+            با این حال می‌توانی با دکمه «افزودن سطر جدید» در پایین جدول، کالاها را دستی اضافه کنی.
         </p>
         """
     else:
@@ -2089,13 +2075,14 @@ async def group_items_page():
             <p class="message message-error">
                 در فایل فروش، ستونی برای کد کالا پیدا نشد. لطفاً یکی از ستون‌ها را با نام‌هایی مثل
                 <code>ProductCode</code>، <code>کد کالا</code> یا <code>کد محصول</code> ایجاد کن.
+                همچنین می‌توانی کالاها را با دکمه «افزودن سطر جدید» به‌صورت دستی وارد کنی.
             </p>
             """
         else:
             info_html = f"""
             <p class="message">
-                منبع لیست کالاها، آخرین فایل فروش آپلود‌شده است (ستون کد: <b>{code_col}</b>{'، نام: <b>' + name_col + '</b>' if name_col else ''}).
-                اگر می‌خواهی موردی اضافه کنی که در فروش‌ها نیامده، می‌توانی از سطرهای خالی پایین استفاده کنی.
+                منبع لیست کالاها، آخرین فایل فروش آپلود‌شده است (ستون کد: <b>{code_col}</b>{'، نام: <b>' + name_col + '</b>' if name_col else ''}).<br/>
+                اگر می‌خواهی موردی اضافه کنی که در فروش‌ها نیامده، می‌توانی از دکمهٔ «افزودن سطر جدید» استفاده کنی.
             </p>
             """
 
@@ -2123,7 +2110,7 @@ async def group_items_page():
 
                 current_group = code_to_group.get(code_key, "")
 
-                # ساخت options منوی کشویی گروه کالا
+                # options منوی کشویی برای این کالا (با selected)
                 options_html = '<option value="">-- بدون گروه --</option>'
                 for gname, cfg in default_group_cfg.items():
                     percent = (cfg.get("percent") or 0) * 100
@@ -2153,39 +2140,6 @@ async def group_items_page():
                     </td>
                 </tr>
                 """
-
-    # چند سطر خالی برای تعریف دستی (بدون این‌که در فروش آمده باشند)
-    extra_rows = 5
-    for _ in range(extra_rows):
-        # منوی کشویی گروه برای ردیف‌های دستی
-        options_html = '<option value="">-- بدون گروه --</option>'
-        for gname, cfg in default_group_cfg.items():
-            percent = (cfg.get("percent") or 0) * 100
-            due_days = cfg.get("due_days")
-            is_cash = cfg.get("is_cash", False)
-            label_parts = [gname, f"{percent:.2f}٪"]
-            if due_days is not None:
-                label_parts.append(f"{due_days} روز")
-            if is_cash:
-                label_parts.append("نقدی")
-            label = " | ".join(label_parts)
-            options_html += f'<option value="{gname}">{label}</option>'
-
-        rows_html += f"""
-        <tr>
-            <td>
-                <input type="text" name="prod_code" value="" placeholder="کد کالا" />
-            </td>
-            <td>
-                <input type="text" name="prod_name" value="" placeholder="نام کالا (اختیاری)" />
-            </td>
-            <td>
-                <select name="prod_group">
-                    {options_html}
-                </select>
-            </td>
-        </tr>
-        """
 
     # مپ فعلی کالا → گروه برای نمایش پایین صفحه
     if not pg_map.empty:
@@ -2219,15 +2173,21 @@ async def group_items_page():
                 <form action="/group-items-save" method="post">
                     <div class="table-wrapper">
                         <table>
-                            <tr>
-                                <th>کد کالا</th>
-                                <th>نام کالا</th>
-                                <th>گروه کالا</th>
-                            </tr>
-                            {rows_html}
+                            <thead>
+                                <tr>
+                                    <th>کد کالا</th>
+                                    <th>نام کالا</th>
+                                    <th>گروه کالا</th>
+                                </tr>
+                            </thead>
+                            <tbody id="product-group-body">
+                                {rows_html}
+                            </tbody>
                         </table>
                     </div>
                     <br/>
+                    <button type="button" onclick="addProductRow()">➕ افزودن سطر جدید</button>
+                    &nbsp;
                     <button type="submit">ذخیره تخصیص‌ها در product_group_map.xlsx</button>
                 </form>
 
@@ -2238,6 +2198,30 @@ async def group_items_page():
 
                 <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
+
+            <script>
+                const PRODUCT_GROUP_OPTIONS = `{product_group_options_js}`;
+
+                function addProductRow() {{
+                    const tbody = document.getElementById('product-group-body');
+                    if (!tbody) return;
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>
+                            <input type="text" name="prod_code" value="" placeholder="کد کالا" />
+                        </td>
+                        <td>
+                            <input type="text" name="prod_name" value="" placeholder="نام کالا (اختیاری)" />
+                        </td>
+                        <td>
+                            <select name="prod_group">
+                                ${'{'}PRODUCT_GROUP_OPTIONS{'}'}
+                            </select>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                }}
+            </script>
         </body>
     </html>
     """
