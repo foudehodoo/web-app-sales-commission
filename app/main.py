@@ -1735,19 +1735,168 @@ async def group_config_save(request: Request):
 
 # ------------------ UI: تب ۳ – تخصیص کالا به گروه ------------------ #
 
+# ------------------ UI: تب ۳ – تخصیص کالا به گروه ------------------ #
+
 @app.get("/group-items", response_class=HTMLResponse)
 async def group_items_page():
     nav_html = build_nav("items")
 
-    pg_map = load_product_group_map()
+    # تنظیمات گروه‌های پیش‌فرض (برای ساخت منوی کشویی)
+    default_group_cfg = load_default_group_config()
 
-    # جدول مپ فعلی
-    map_html = "<p>تاکنون هیچ مپی برای کالاها ثبت نشده است.</p>"
+    # مپ فعلی کالا → گروه از روی فایل product_group_map.xlsx
+    pg_map = load_product_group_map()
+    code_to_group: dict[str, str] = {}
     if not pg_map.empty:
-        map_view = pg_map.copy()
+        for _, r in pg_map.iterrows():
+            code = canonicalize_code(r.get("ProductCode"))
+            grp = str(r.get("Group") or "").strip()
+            if code and grp:
+                code_to_group[code] = grp
+
+    df_sales = LAST_UPLOAD["sales"]
+
+    # آماده‌سازی ردیف‌ها
+    rows_html = ""
+    info_html = ""
+
+    # اگر هنوز فایل فروش آپلود نشده
+    if df_sales is None:
+        info_html = """
+        <p class="message message-error">
+            هنوز هیچ فایل فروشی در تب «محاسبه پورسانت» آپلود نشده است.
+            برای این‌که لیست کالاها را از روی فروش‌ها ببینیم، لطفاً اول در صفحهٔ اصلی فایل فروش را آپلود کن.
+        </p>
+        """
+    else:
+        # سعی می‌کنیم ستون کد و نام کالا را در فروش پیدا کنیم
+        code_candidates = ["ProductCode", "کد کالا", "کد محصول", "ProductID"]
+        name_candidates = ["ProductName", "نام کالا",
+                           "شرح کالا", "شرح", "ProductGroupName"]
+
+        code_col = None
+        name_col = None
+
+        for c in code_candidates:
+            if c in df_sales.columns:
+                code_col = c
+                break
+
+        for c in name_candidates:
+            if c in df_sales.columns:
+                name_col = c
+                break
+
+        if code_col is None:
+            info_html = """
+            <p class="message message-error">
+                در فایل فروش، ستونی برای کد کالا پیدا نشد. لطفاً یکی از ستون‌ها را با نام‌هایی مثل
+                <code>ProductCode</code>، <code>کد کالا</code> یا <code>کد محصول</code> ایجاد کن.
+            </p>
+            """
+        else:
+            info_html = f"""
+            <p class="message">
+                منبع لیست کالاها، آخرین فایل فروش آپلود‌شده است (ستون کد: <b>{code_col}</b>{'، نام: <b>' + name_col + '</b>' if name_col else ''}).
+                اگر می‌خواهی موردی اضافه کنی که در فروش‌ها نیامده، می‌توانی از سطرهای خالی پایین استفاده کنی.
+            </p>
+            """
+
+            df_items = df_sales.copy()
+            df_items["__CodeKey__"] = df_items[code_col].map(
+                lambda v: canonicalize_code(v) if pd.notna(v) else None
+            )
+            df_items = df_items[df_items["__CodeKey__"].notna()].copy()
+
+            if name_col:
+                df_items["__Name__"] = df_items[name_col].astype(str)
+            else:
+                df_items["__Name__"] = ""
+
+            df_items = (
+                df_items[["__CodeKey__", "__Name__"]]
+                .drop_duplicates()
+                .sort_values(["__CodeKey__"])
+            )
+
+            # برای هر کالای موجود در فروش، یک ردیف با منوی کشویی گروه
+            for _, row in df_items.iterrows():
+                code_key = str(row["__CodeKey__"])
+                name_val = str(row["__Name__"] or "")
+
+                current_group = code_to_group.get(code_key, "")
+
+                # ساخت options منوی کشویی گروه کالا
+                options_html = '<option value="">-- بدون گروه --</option>'
+                for gname, cfg in default_group_cfg.items():
+                    percent = (cfg.get("percent") or 0) * 100
+                    due_days = cfg.get("due_days")
+                    is_cash = cfg.get("is_cash", False)
+                    label_parts = [gname, f"{percent:.2f}٪"]
+                    if due_days is not None:
+                        label_parts.append(f"{due_days} روز")
+                    if is_cash:
+                        label_parts.append("نقدی")
+                    label = " | ".join(label_parts)
+                    sel_attr = "selected" if gname == current_group else ""
+                    options_html += f'<option value="{gname}" {sel_attr}>{label}</option>'
+
+                rows_html += f"""
+                <tr>
+                    <td>
+                        <input type="text" name="prod_code" value="{code_key}" />
+                    </td>
+                    <td>
+                        <input type="text" name="prod_name" value="{name_val}" />
+                    </td>
+                    <td>
+                        <select name="prod_group">
+                            {options_html}
+                        </select>
+                    </td>
+                </tr>
+                """
+
+    # چند سطر خالی برای تعریف دستی (بدون این‌که در فروش آمده باشند)
+    extra_rows = 5
+    for _ in range(extra_rows):
+        # منوی کشویی گروه برای ردیف‌های دستی
+        options_html = '<option value="">-- بدون گروه --</option>'
+        for gname, cfg in default_group_cfg.items():
+            percent = (cfg.get("percent") or 0) * 100
+            due_days = cfg.get("due_days")
+            is_cash = cfg.get("is_cash", False)
+            label_parts = [gname, f"{percent:.2f}٪"]
+            if due_days is not None:
+                label_parts.append(f"{due_days} روز")
+            if is_cash:
+                label_parts.append("نقدی")
+            label = " | ".join(label_parts)
+            options_html += f'<option value="{gname}">{label}</option>'
+
+        rows_html += f"""
+        <tr>
+            <td>
+                <input type="text" name="prod_code" value="" placeholder="کد کالا" />
+            </td>
+            <td>
+                <input type="text" name="prod_name" value="" placeholder="نام کالا (اختیاری)" />
+            </td>
+            <td>
+                <select name="prod_group">
+                    {options_html}
+                </select>
+            </td>
+        </tr>
+        """
+
+    # مپ فعلی کالا → گروه برای نمایش پایین صفحه
+    if not pg_map.empty:
         map_html = """
         <div class="table-wrapper">
-        """ + map_view.to_html(index=False, border=0) + "</div>"
+        """ + pg_map.to_html(index=False, border=0) + "</div>"
+    else:
+        map_html = "<p>فعلاً مپی برای کالاها ثبت نشده است.</p>"
 
     html = f"""
     <html>
@@ -1762,196 +1911,13 @@ async def group_items_page():
 
                 <h1>تخصیص کالا به گروه</h1>
                 <p>
-                    در این تب می‌توانی کد کالاها را (به همراه نامشان) از یک فایل اکسل وارد کنی و برای هر کدام یک «گروه کالا»
-                    از لیست پیش‌فرض‌ها انتخاب کنی. این مپ در فایلی به نام <code>product_group_map.xlsx</code> ذخیره می‌شود
-                    و در محاسبهٔ پورسانت برای پر کردن خودکار ستون «گروه کالا» استفاده خواهد شد.
+                    در این تب، کد و نام کالاها را (از روی آخرین فایل فروش یا به‌صورت دستی) می‌بینی و برای هر کالا
+                    یک «گروه کالا» از لیست پیش‌فرض‌ها انتخاب می‌کنی.
+                    این مپ در <code>product_group_map.xlsx</code> ذخیره می‌شود و در محاسبهٔ پورسانت برای
+                    پر کردن خودکار گروه کالا استفاده می‌شود.
                 </p>
 
-                <h2>۱) بارگذاری اکسل کالاها</h2>
-                <p style="font-size:12px;color:#4b5563;">
-                    فایل باید حداقل یک ستون کد کالا و ترجیحاً یک ستون نام کالا داشته باشد. اسامی قابل قبول ستون کد کالا:
-                    <code>ProductCode</code>، <code>کد کالا</code>، <code>کد محصول</code>.
-                    برای نام کالا نیز: <code>ProductName</code>، <code>نام کالا</code>.
-                </p>
-
-                <form action="/group-items-upload" method="post" enctype="multipart/form-data">
-                    <div class="form-row">
-                        <label>فایل اکسل لیست کالاها</label><br/>
-                        <input type="file" name="items_file" accept=".xlsx,.xls" required />
-                    </div>
-                    <button type="submit">بارگذاری و انتخاب گروه برای کالاها</button>
-                </form>
-
-                <hr/>
-
-                <h2>۲) مپ فعلی کالا → گروه</h2>
-                {map_html}
-
-                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
-
-
-@app.post("/group-items-upload", response_class=HTMLResponse)
-async def group_items_upload(items_file: UploadFile = File(...)):
-    nav_html = build_nav("items")
-
-    try:
-        df_items = pd.read_excel(items_file.file)
-    except Exception as e:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا در خواندن فایل کالا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا در خواندن فایل کالا</h1>
-                    <p>نتوانستم فایل اکسل را بخوانم. متن خطا:</p>
-                    <pre style="background:#f3f4f6;padding:8px;border-radius:8px;font-size:11px;">{str(e)}</pre>
-                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-
-    # پیدا کردن ستون کد کالا
-    code_candidates = ["ProductCode", "کد کالا", "کد محصول"]
-    code_col = None
-    for c in code_candidates:
-        if c in df_items.columns:
-            code_col = c
-            break
-
-    if code_col is None:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا در فایل کالا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا در فایل کالا</h1>
-                    <p>در فایل انتخاب‌شده، هیچ ستونی برای کد کالا پیدا نشد.</p>
-                    <p>لطفاً ستونی با یکی از نام‌های زیر داشته باشد: <code>ProductCode</code>، <code>کد کالا</code>، <code>کد محصول</code>.</p>
-                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-
-    # پیدا کردن ستون نام کالا
-    name_candidates = ["ProductName", "نام کالا", "شرح کالا", "شرح"]
-    name_col = None
-    for c in name_candidates:
-        if c in df_items.columns:
-            name_col = c
-            break
-
-    # نرمال‌سازی کد
-    df_items = df_items.copy()
-    df_items["__CodeKey__"] = df_items[code_col].map(
-        lambda v: canonicalize_code(v) if pd.notna(v) else None
-    )
-    df_items = df_items[df_items["__CodeKey__"].notna()].copy()
-
-    if df_items.empty:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا</h1>
-                    <p>هیچ کد کالای معتبری در فایل پیدا نشد.</p>
-                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-
-    # مپ فعلی
-    pg_map = load_product_group_map()
-    code_to_group: dict[str, str] = {}
-    if not pg_map.empty:
-        for _, row in pg_map.iterrows():
-            code = str(row.get("ProductCode") or "").strip()
-            grp = str(row.get("Group") or "").strip()
-            if code and grp:
-                code_to_group[code] = grp
-
-    # تنظیمات گروه‌های پیش‌فرض برای ساخت منوی کشویی
-    default_group_cfg = load_default_group_config()
-
-    rows_html = ""
-    for _, row in df_items.iterrows():
-        code_key = str(row["__CodeKey__"])
-        name_val = str(row[name_col]) if name_col and pd.notna(
-            row[name_col]) else ""
-        current_group = code_to_group.get(code_key, "")
-
-        # منوی کشویی برای این ردیف
-        options_html = '<option value="">-- بدون گروه --</option>'
-        for gname, cfg in default_group_cfg.items():
-            percent = (cfg.get("percent") or 0) * 100
-            due_days = cfg.get("due_days")
-            is_cash = cfg.get("is_cash", False)
-            label_parts = [gname, f"{percent:.2f}٪"]
-            if due_days is not None:
-                label_parts.append(f"{due_days} روز")
-            if is_cash:
-                label_parts.append("نقدی")
-            label = " | ".join(label_parts)
-            sel_attr = "selected" if gname == current_group else ""
-            options_html += f'<option value="{gname}" {sel_attr}>{label}</option>'
-
-        rows_html += f"""
-        <tr>
-            <td>
-                <input type="hidden" name="prod_code" value="{code_key}" />
-                {code_key}
-            </td>
-            <td>
-                <input type="hidden" name="prod_name" value="{name_val}" />
-                {name_val}
-            </td>
-            <td>
-                <select name="prod_group">
-                    {options_html}
-                </select>
-            </td>
-        </tr>
-        """
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>انتخاب گروه برای کالاها</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>انتخاب گروه برای کالاها</h1>
-                <p>برای هر کالا یکی از گروه‌های تعریف‌شده را انتخاب کن، سپس روی «ذخیره تخصیص‌ها» بزن.</p>
+                {info_html}
 
                 <form action="/group-items-save" method="post">
                     <div class="table-wrapper">
@@ -1968,7 +1934,12 @@ async def group_items_upload(items_file: UploadFile = File(...)):
                     <button type="submit">ذخیره تخصیص‌ها در product_group_map.xlsx</button>
                 </form>
 
-                <a class="footer-link" href="/group-items">بازگشت</a>
+                <hr/>
+
+                <h2>مپ فعلی کالا → گروه</h2>
+                {map_html}
+
+                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
         </body>
     </html>
@@ -1992,7 +1963,7 @@ async def group_items_save(request: Request):
             continue
         grp_name = str(grp).strip()
         if not grp_name:
-            # اگر گروه انتخاب نشده، مپی برایش نمی‌سازیم
+            # اگر گروه انتخاب نشده، این ردیف را نادیده بگیر
             continue
         name_val = str(name).strip() if name is not None else ""
         new_rows.append(
@@ -2006,6 +1977,7 @@ async def group_items_save(request: Request):
     df_new = pd.DataFrame(
         new_rows, columns=["ProductCode", "ProductName", "Group"])
 
+    # خواندن مپ قبلی و merge
     df_old = load_product_group_map()
     if df_old.empty:
         df_all = df_new
@@ -2060,7 +2032,7 @@ async def group_items_save(request: Request):
                 <h2>مپ فعلی کالا → گروه</h2>
                 {map_html}
 
-                <a class="footer-link" href="/group-items">بازگشت به صفحهٔ بارگذاری اکسل کالاها</a>
+                <a class="footer-link" href="/group-items">بازگشت به صفحهٔ تخصیص کالا</a>
                 <br/>
                 <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
