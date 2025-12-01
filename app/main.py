@@ -12,9 +12,10 @@ import re
 import os
 import json
 
-# ------------------ تنظیمات فایل پیش‌فرض گروه‌ها ------------------ #
+# ------------------ تنظیمات فایل‌های پیکربندی ------------------ #
 
 DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
+PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
 
 
 def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
@@ -69,6 +70,60 @@ def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
         }
 
     return cfg
+
+
+def canonicalize_code(value):
+    """
+    تبدیل کد عددی (مثلاً 13 یا 13.0 یا '13 ') به رشته تمیز.
+    اگر قابل تبدیل به عدد نباشد، همان رشته را برمی‌گرداند.
+    """
+    if pd.isna(value):
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s_no_comma = s.replace(",", "")
+    try:
+        f = float(s_no_comma)
+        if f.is_integer():
+            return str(int(f))
+    except Exception:
+        return s
+    return s
+
+
+def load_product_group_map(path: str = PRODUCT_GROUP_MAP_PATH) -> pd.DataFrame:
+    """
+    خواندن مپ کد کالا → نام گروه کالا از اکسل.
+    ستون‌ها: ProductCode, ProductName, Group
+    """
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["ProductCode", "ProductName", "Group"])
+
+    df = pd.read_excel(path)
+
+    for c in ["ProductCode", "ProductName", "Group"]:
+        if c not in df.columns:
+            df[c] = None
+
+    # نرمال‌سازی کد کالا
+    df["ProductCode"] = df["ProductCode"].map(
+        lambda v: canonicalize_code(v) if pd.notna(v) else None
+    )
+
+    return df[["ProductCode", "ProductName", "Group"]]
+
+
+def save_product_group_map(df: pd.DataFrame, path: str = PRODUCT_GROUP_MAP_PATH) -> None:
+    """
+    ذخیره‌ی مپ کد کالا → گروه در اکسل.
+    """
+    cols = ["ProductCode", "ProductName", "Group"]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    df_out = df[cols].copy()
+    df_out.to_excel(path, index=False)
 
 
 # ------------------ توابع تاریخ ------------------ #
@@ -129,31 +184,11 @@ def to_jalali_str(ts):
         return str(ts.date())
 
 
-# ------------------ نرمال‌سازی کد و اسم ------------------ #
-
-def canonicalize_code(value):
-    """
-    تبدیل کد عددی (مثلاً 13 یا 13.0 یا '13 ') به رشته تمیز.
-    اگر قابل تبدیل به عدد نباشد، همان رشته را برمی‌گرداند.
-    """
-    if pd.isna(value):
-        return None
-    s = str(value).strip()
-    if not s:
-        return None
-    s_no_comma = s.replace(",", "")
-    try:
-        f = float(s_no_comma)
-        if f.is_integer():
-            return str(int(f))
-    except Exception:
-        return s
-    return s
-
+# ------------------ نرمال‌سازی اسم ------------------ #
 
 def normalize_persian_name(s) -> str:
     """
-    نرمال‌سازی اسم فارسی برای نمایش:
+    نرمال‌سازی اسم فارسی:
     - ي/ی و ك/ک و ... → معادل فارسی
     - حذف حرکات
     - یکسان‌سازی فاصله‌ها
@@ -174,7 +209,7 @@ def normalize_persian_name(s) -> str:
         "أ": "ا",
         "ٱ": "ا",
         "ئ": "ی",
-        "‌": " ",  # نیم‌فاصله
+        "‌": " ",   # نیم‌فاصله
     }
     for src, dst in replacements.items():
         s = s.replace(src, dst)
@@ -230,20 +265,29 @@ body {
 }
 .navbar {
     margin-bottom: 16px;
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 8px;
 }
 .navbar a {
     display: inline-block;
-    margin-inline-end: 12px;
+    padding: 6px 10px;
     font-size: 13px;
-    color: #2563eb;
+    color: #4b5563;
     text-decoration: none;
+    border-radius: 999px;
 }
 .navbar a.active {
-    font-weight: 700;
-    text-decoration: underline;
+    background: #2563eb;
+    color: #ffffff;
+    box-shadow: 0 3px 8px rgba(37, 99, 235, 0.4);
+}
+.navbar a:hover {
+    background: #e5e7eb;
 }
 h1 {
-    margin-top: 0;
+    margin-top: 8px;
     color: #111827;
     font-size: 22px;
 }
@@ -428,6 +472,18 @@ hr {
 """
 
 
+def build_nav(active: str) -> str:
+    def cls(tab: str) -> str:
+        return "active" if tab == active else ""
+    return f'''
+    <div class="navbar">
+        <a href="/" class="{cls("main")}">محاسبه پورسانت</a>
+        <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا (پیش‌فرض)</a>
+        <a href="/group-items" class="{cls("items")}">تخصیص کالا به گروه</a>
+    </div>
+    '''
+
+
 # ------------------ توابع کمکی ------------------ #
 
 def get_priority(product_group: str) -> str:
@@ -482,7 +538,7 @@ def extract_customer_for_payment(
     code_raw = row.get("CustomerCode")
     name = row.get("CustomerName")
 
-    # 1) ابتدا سعی کن از روی نام مشتری (اگر map داریم)
+    # 1) ابتدا از روی نام (اگر map داریم)
     if name_code_map is not None and pd.notna(name):
         key = name_key_for_matching(name)
         if key:
@@ -837,6 +893,7 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    nav_html = build_nav("main")
     html = f"""
     <html>
         <head>
@@ -846,11 +903,7 @@ async def index():
         </head>
         <body>
             <div class="container">
-                <div class="navbar">
-                    <a href="/" class="active">محاسبه پورسانت</a>
-                    <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                </div>
-
+                {nav_html}
                 <h1>محاسبه پورسانت فروش</h1>
                 <p>مرحله ۱ از ۲ – لطفاً فایل‌های اکسل فروش، پرداخت‌ها و در صورت وجود چک‌ها را انتخاب کن.</p>
 
@@ -928,6 +981,8 @@ async def upload_all(
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None),
 ):
+    nav_html = build_nav("main")
+
     df_sales = load_sales_excel(sales_file.file)
     df_pay = load_payments_excel(payments_file.file)
 
@@ -951,10 +1006,7 @@ async def upload_all(
             </head>
             <body>
                 <div class="container">
-                    <div class="navbar">
-                        <a href="/" class="active">محاسبه پورسانت</a>
-                        <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                    </div>
+                    {nav_html}
                     <h1>خطا در فایل فروش‌ها</h1>
                     <p>در فایل فروش‌ها ستونی به نام <b>ProductCode</b> یا <b>ProductGroup</b> پیدا نشد.</p>
                     <p>لطفاً یکی از این ستون‌ها را به اکسل اضافه کن و دوباره امتحان کن.</p>
@@ -972,10 +1024,20 @@ async def upload_all(
     LAST_UPLOAD["checks"] = df_chk
     LAST_UPLOAD["group_col"] = group_col
 
-    # 📥 خواندن تنظیمات پیش‌فرض گروه‌ها از group_config.xlsx
+    # 📥 خواندن تنظیمات پیش‌فرض گروه‌ها
     default_group_cfg = load_default_group_config()
 
-    # حدس ستون نام گروه/کالا برای نمایش (که در متن نوشته شود)
+    # 📥 خواندن مپ کد کالا → گروه
+    prod_group_df = load_product_group_map()
+    code_to_category: dict[str, str] = {}
+    if not prod_group_df.empty:
+        for _, row in prod_group_df.iterrows():
+            code = canonicalize_code(row.get("ProductCode"))
+            grp = str(row.get("Group") or "").strip()
+            if code and grp:
+                code_to_category[code] = grp
+
+    # حدس ستون نام گروه/کالا برای نمایش
     name_col_candidates = [
         "ProductName",
         "ProductGroupName",
@@ -1017,8 +1079,24 @@ async def upload_all(
         else:
             display_text = g_str
 
-        # اگر در فایل پیش‌فرض، گروهی با همین نام وجود داشته باشد → آن را به عنوان انتخاب خودکار در نظر بگیر
-        pre_cfg = default_group_cfg.get(g_str)
+        # انتخاب گروه پیش‌فرض (category) از روی مپ کالا→گروه (اگر group_col == ProductCode)
+        category_for_code = None
+        if group_col == "ProductCode":
+            canon_code = canonicalize_code(g)
+            if canon_code:
+                category_for_code = code_to_category.get(canon_code)
+
+        pre_cfg = None
+        selected_category = ""
+
+        # ۱) اگر از روی مپ کالا→گروه گروهی پیدا شد
+        if category_for_code and category_for_code in default_group_cfg:
+            selected_category = category_for_code
+            pre_cfg = default_group_cfg[category_for_code]
+        # ۲) اگر خود g_str نام یکی از گروه‌های پیش‌فرض بود
+        elif g_str in default_group_cfg:
+            selected_category = g_str
+            pre_cfg = default_group_cfg[g_str]
 
         # مقدار ورودی‌ها
         if pre_cfg:
@@ -1028,12 +1106,11 @@ async def upload_all(
                 f'value="{due_days_val}"' if due_days_val is not None else ""
             )
             checked_attr = "checked" if pre_cfg.get("is_cash") else ""
-            selected_category = g_str
         else:
             percent_value_attr = ""
             due_days_value_attr = ""
             checked_attr = ""
-            selected_category = ""
+            selected_category = selected_category or ""
 
         # منوی کشویی گروه کالا
         options_html = '<option value="">-- انتخاب کن --</option>'
@@ -1084,36 +1161,33 @@ async def upload_all(
         </head>
         <body>
             <div class="container">
-                <div class="navbar">
-                    <a href="/">محاسبه پورسانت</a>
-                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                </div>
+                {nav_html}
+                <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
+                <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
+                <ul style="font-size:12px; color:#4b5563;">
+                    <li>ستون <b>گروه کالا</b> از روی صفحهٔ «تعریف گروه‌های کالا (پیش‌فرض)» خوانده می‌شود.</li>
+                    <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
+                    <li>اگر در تب «تخصیص کالا به گروه» کد کالاها را به گروه‌ها داده باشی، اینجا به‌صورت خودکار پر می‌شود.</li>
+                </ul>
 
-            <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
-            <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
-            <ul style="font-size:12px; color:#4b5563;">
-                <li>ستون <b>گروه کالا</b> از روی فایل پیش‌فرض (<code>group_config.xlsx</code>) خوانده می‌شود.</li>
-                <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
-            </ul>
+                <form action="/calculate-commission" method="post">
+                    <div class="table-wrapper">
+                        <table>
+                            <tr>
+                                <th>کد/گروه کالا + نام</th>
+                                <th>گروه کالا (from پیش‌فرض)</th>
+                                <th>درصد پورسانت (%)</th>
+                                <th>مهلت تسویه (روز)</th>
+                                <th>اولویت نقدی</th>
+                            </tr>
+                            {rows_html}
+                        </table>
+                    </div>
+                    <br/>
+                    <button type="submit">محاسبه پورسانت</button>
+                </form>
 
-            <form action="/calculate-commission" method="post">
-                <div class="table-wrapper">
-                    <table>
-                        <tr>
-                            <th>کد/گروه کالا + نام</th>
-                            <th>گروه کالا (from اکسل)</th>
-                            <th>درصد پورسانت (%)</th>
-                            <th>مهلت تسویه (روز)</th>
-                            <th>اولویت نقدی</th>
-                        </tr>
-                        {rows_html}
-                    </table>
-                </div>
-                <br/>
-                <button type="submit">محاسبه پورسانت</button>
-            </form>
-
-            <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
+                <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
             </div>
 
             <script>
@@ -1152,10 +1226,12 @@ async def upload_all(
     return HTMLResponse(content=html)
 
 
-# ------------------ UI مرحله ۲: گرفتن تنظیمات و محاسبه ------------------ #
+# ------------------ /calculate-commission ------------------ #
 
 @app.post("/calculate-commission", response_class=HTMLResponse)
 async def calculate_commission(request: Request):
+    nav_html = build_nav("main")
+
     if LAST_UPLOAD["sales"] is None or LAST_UPLOAD["payments"] is None:
         html = f"""
         <html>
@@ -1166,10 +1242,7 @@ async def calculate_commission(request: Request):
             </head>
             <body>
                 <div class="container">
-                    <div class="navbar">
-                        <a href="/" class="active">محاسبه پورسانت</a>
-                        <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                    </div>
+                    {nav_html}
                     <h1>خطا</h1>
                     <p>ابتدا باید فایل‌های اکسل را در مرحله قبل آپلود کنی.</p>
                     <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
@@ -1230,10 +1303,7 @@ async def calculate_commission(request: Request):
             </head>
             <body>
                 <div class="container">
-                    <div class="navbar">
-                        <a href="/">محاسبه پورسانت</a>
-                        <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                    </div>
+                    {nav_html}
                     <h1>خطا</h1>
                     <p>هیچ تنظیم معتبری برای گروه‌ها وارد نشده است.</p>
                     <a class="footer-link" href="javascript:history.back()">بازگشت</a>
@@ -1345,11 +1415,7 @@ async def calculate_commission(request: Request):
         </head>
         <body>
             <div class="container">
-                <div class="navbar">
-                    <a href="/" class="active">محاسبه پورسانت</a>
-                    <a href="/group-config">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                </div>
-
+                {nav_html}
                 <h1>نتیجه محاسبه پورسانت</h1>
 
                 <div class="summary-grid">
@@ -1402,6 +1468,8 @@ async def calculate_commission(request: Request):
 
 @app.get("/group-config", response_class=HTMLResponse)
 async def group_config_page():
+    nav_html = build_nav("config")
+
     # خواندن داده‌های فعلی
     current_cfg = load_default_group_config()
 
@@ -1427,7 +1495,7 @@ async def group_config_page():
         </tr>
         """
 
-    # چند ردیف خالی برای افزودن گروه جدید
+    # چند ردیف خالی اولیه
     extra_rows = 5
     base_idx = len(rows)
     for j in range(extra_rows):
@@ -1452,10 +1520,7 @@ async def group_config_page():
         </head>
         <body>
             <div class="container">
-                <div class="navbar">
-                    <a href="/">محاسبه پورسانت</a>
-                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                </div>
+                {nav_html}
 
                 <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
                 <p>
@@ -1472,15 +1537,37 @@ async def group_config_page():
                                 <th>مهلت تسویه (روز)</th>
                                 <th>نقدی؟</th>
                             </tr>
-                            {rows_html}
+                            <tbody id="group-config-body">
+                                {rows_html}
+                            </tbody>
                         </table>
                     </div>
                     <br/>
+                    <button type="button" onclick="addGroupRow()">➕ افزودن سطر جدید</button>
+                    &nbsp;
                     <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
                 </form>
 
                 <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
+
+            <script>
+                function addGroupRow() {{
+                    const tbody = document.getElementById('group-config-body');
+                    if (!tbody) return;
+                    const idx = tbody.querySelectorAll('tr').length;
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
+                        <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
+                        <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
+                        <td class="checkbox-center">
+                            <input type="checkbox" name="cfg_is_cash" value="${idx}" />
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                }}
+            </script>
         </body>
     </html>
     """
@@ -1489,13 +1576,15 @@ async def group_config_page():
 
 @app.post("/group-config", response_class=HTMLResponse)
 async def group_config_save(request: Request):
+    nav_html = build_nav("config")
+
     form = await request.form()
     groups = form.getlist("cfg_group")
     percents = form.getlist("cfg_percent")
     due_days_list = form.getlist("cfg_due_days")
     cash_indices = set(form.getlist("cfg_is_cash"))
 
-    rows = []
+    rows_data = []
     for idx, (g, p, dd) in enumerate(zip(groups, percents, due_days_list)):
         g_key = str(g).strip()
         if not g_key:
@@ -1522,7 +1611,7 @@ async def group_config_save(request: Request):
 
         is_cash = str(idx) in cash_indices
 
-        rows.append(
+        rows_data.append(
             {
                 "Group": g_key,
                 "Percent": percent_val,
@@ -1531,8 +1620,8 @@ async def group_config_save(request: Request):
             }
         )
 
-    if rows:
-        df_out = pd.DataFrame(rows)
+    if rows_data:
+        df_out = pd.DataFrame(rows_data)
         df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
 
         message_html = """
@@ -1541,7 +1630,6 @@ async def group_config_save(request: Request):
         </div>
         """
     else:
-        # چیزی ذخیره نشده
         message_html = """
         <div class="message message-error">
             هیچ ردیف معتبری برای ذخیره وارد نشده است.
@@ -1550,9 +1638,9 @@ async def group_config_save(request: Request):
 
     # پس از ذخیره، دوباره فرم را با داده‌های جدید نمایش بده
     current_cfg = load_default_group_config()
-    rows_data = list(current_cfg.items())
+    rows = list(current_cfg.items())
     rows_html = ""
-    for idx, (gname, cfg) in enumerate(rows_data):
+    for idx, (gname, cfg) in enumerate(rows):
         percent_human = (cfg.get("percent") or 0) * 100
         due_days = cfg.get("due_days")
         is_cash = cfg.get("is_cash", False)
@@ -1571,7 +1659,7 @@ async def group_config_save(request: Request):
         """
 
     extra_rows = 5
-    base_idx = len(rows_data)
+    base_idx = len(rows)
     for j in range(extra_rows):
         idx = base_idx + j
         rows_html += f"""
@@ -1594,10 +1682,7 @@ async def group_config_save(request: Request):
         </head>
         <body>
             <div class="container">
-                <div class="navbar">
-                    <a href="/">محاسبه پورسانت</a>
-                    <a href="/group-config" class="active">تعریف گروه‌های کالا (پیش‌فرض)</a>
-                </div>
+                {nav_html}
 
                 <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
                 {message_html}
@@ -1611,13 +1696,372 @@ async def group_config_save(request: Request):
                                 <th>مهلت تسویه (روز)</th>
                                 <th>نقدی؟</th>
                             </tr>
+                            <tbody id="group-config-body">
+                                {rows_html}
+                            </tbody>
+                        </table>
+                    </div>
+                    <br/>
+                    <button type="button" onclick="addGroupRow()">➕ افزودن سطر جدید</button>
+                    &nbsp;
+                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
+                </form>
+
+                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+            </div>
+
+            <script>
+                function addGroupRow() {{
+                    const tbody = document.getElementById('group-config-body');
+                    if (!tbody) return;
+                    const idx = tbody.querySelectorAll('tr').length;
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
+                        <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
+                        <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
+                        <td class="checkbox-center">
+                            <input type="checkbox" name="cfg_is_cash" value="${idx}" />
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                }}
+            </script>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+# ------------------ UI: تب ۳ – تخصیص کالا به گروه ------------------ #
+
+@app.get("/group-items", response_class=HTMLResponse)
+async def group_items_page():
+    nav_html = build_nav("items")
+
+    pg_map = load_product_group_map()
+
+    # جدول مپ فعلی
+    map_html = "<p>تاکنون هیچ مپی برای کالاها ثبت نشده است.</p>"
+    if not pg_map.empty:
+        map_view = pg_map.copy()
+        map_html = """
+        <div class="table-wrapper">
+        """ + map_view.to_html(index=False, border=0) + "</div>"
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>تخصیص کالا به گروه</title>
+            {BASE_CSS}
+        </head>
+        <body>
+            <div class="container">
+                {nav_html}
+
+                <h1>تخصیص کالا به گروه</h1>
+                <p>
+                    در این تب می‌توانی کد کالاها را (به همراه نامشان) از یک فایل اکسل وارد کنی و برای هر کدام یک «گروه کالا»
+                    از لیست پیش‌فرض‌ها انتخاب کنی. این مپ در فایلی به نام <code>product_group_map.xlsx</code> ذخیره می‌شود
+                    و در محاسبهٔ پورسانت برای پر کردن خودکار ستون «گروه کالا» استفاده خواهد شد.
+                </p>
+
+                <h2>۱) بارگذاری اکسل کالاها</h2>
+                <p style="font-size:12px;color:#4b5563;">
+                    فایل باید حداقل یک ستون کد کالا و ترجیحاً یک ستون نام کالا داشته باشد. اسامی قابل قبول ستون کد کالا:
+                    <code>ProductCode</code>، <code>کد کالا</code>، <code>کد محصول</code>.
+                    برای نام کالا نیز: <code>ProductName</code>، <code>نام کالا</code>.
+                </p>
+
+                <form action="/group-items-upload" method="post" enctype="multipart/form-data">
+                    <div class="form-row">
+                        <label>فایل اکسل لیست کالاها</label><br/>
+                        <input type="file" name="items_file" accept=".xlsx,.xls" required />
+                    </div>
+                    <button type="submit">بارگذاری و انتخاب گروه برای کالاها</button>
+                </form>
+
+                <hr/>
+
+                <h2>۲) مپ فعلی کالا → گروه</h2>
+                {map_html}
+
+                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/group-items-upload", response_class=HTMLResponse)
+async def group_items_upload(items_file: UploadFile = File(...)):
+    nav_html = build_nav("items")
+
+    try:
+        df_items = pd.read_excel(items_file.file)
+    except Exception as e:
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>خطا در خواندن فایل کالا</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>خطا در خواندن فایل کالا</h1>
+                    <p>نتوانستم فایل اکسل را بخوانم. متن خطا:</p>
+                    <pre style="background:#f3f4f6;padding:8px;border-radius:8px;font-size:11px;">{str(e)}</pre>
+                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    # پیدا کردن ستون کد کالا
+    code_candidates = ["ProductCode", "کد کالا", "کد محصول"]
+    code_col = None
+    for c in code_candidates:
+        if c in df_items.columns:
+            code_col = c
+            break
+
+    if code_col is None:
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>خطا در فایل کالا</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>خطا در فایل کالا</h1>
+                    <p>در فایل انتخاب‌شده، هیچ ستونی برای کد کالا پیدا نشد.</p>
+                    <p>لطفاً ستونی با یکی از نام‌های زیر داشته باشد: <code>ProductCode</code>، <code>کد کالا</code>، <code>کد محصول</code>.</p>
+                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    # پیدا کردن ستون نام کالا
+    name_candidates = ["ProductName", "نام کالا", "شرح کالا", "شرح"]
+    name_col = None
+    for c in name_candidates:
+        if c in df_items.columns:
+            name_col = c
+            break
+
+    # نرمال‌سازی کد
+    df_items = df_items.copy()
+    df_items["__CodeKey__"] = df_items[code_col].map(
+        lambda v: canonicalize_code(v) if pd.notna(v) else None
+    )
+    df_items = df_items[df_items["__CodeKey__"].notna()].copy()
+
+    if df_items.empty:
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>خطا</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>خطا</h1>
+                    <p>هیچ کد کالای معتبری در فایل پیدا نشد.</p>
+                    <a class="footer-link" href="/group-items">بازگشت به تخصیص کالا به گروه</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    # مپ فعلی
+    pg_map = load_product_group_map()
+    code_to_group: dict[str, str] = {}
+    if not pg_map.empty:
+        for _, row in pg_map.iterrows():
+            code = str(row.get("ProductCode") or "").strip()
+            grp = str(row.get("Group") or "").strip()
+            if code and grp:
+                code_to_group[code] = grp
+
+    # تنظیمات گروه‌های پیش‌فرض برای ساخت منوی کشویی
+    default_group_cfg = load_default_group_config()
+
+    rows_html = ""
+    for _, row in df_items.iterrows():
+        code_key = str(row["__CodeKey__"])
+        name_val = str(row[name_col]) if name_col and pd.notna(
+            row[name_col]) else ""
+        current_group = code_to_group.get(code_key, "")
+
+        # منوی کشویی برای این ردیف
+        options_html = '<option value="">-- بدون گروه --</option>'
+        for gname, cfg in default_group_cfg.items():
+            percent = (cfg.get("percent") or 0) * 100
+            due_days = cfg.get("due_days")
+            is_cash = cfg.get("is_cash", False)
+            label_parts = [gname, f"{percent:.2f}٪"]
+            if due_days is not None:
+                label_parts.append(f"{due_days} روز")
+            if is_cash:
+                label_parts.append("نقدی")
+            label = " | ".join(label_parts)
+            sel_attr = "selected" if gname == current_group else ""
+            options_html += f'<option value="{gname}" {sel_attr}>{label}</option>'
+
+        rows_html += f"""
+        <tr>
+            <td>
+                <input type="hidden" name="prod_code" value="{code_key}" />
+                {code_key}
+            </td>
+            <td>
+                <input type="hidden" name="prod_name" value="{name_val}" />
+                {name_val}
+            </td>
+            <td>
+                <select name="prod_group">
+                    {options_html}
+                </select>
+            </td>
+        </tr>
+        """
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>انتخاب گروه برای کالاها</title>
+            {BASE_CSS}
+        </head>
+        <body>
+            <div class="container">
+                {nav_html}
+
+                <h1>انتخاب گروه برای کالاها</h1>
+                <p>برای هر کالا یکی از گروه‌های تعریف‌شده را انتخاب کن، سپس روی «ذخیره تخصیص‌ها» بزن.</p>
+
+                <form action="/group-items-save" method="post">
+                    <div class="table-wrapper">
+                        <table>
+                            <tr>
+                                <th>کد کالا</th>
+                                <th>نام کالا</th>
+                                <th>گروه کالا</th>
+                            </tr>
                             {rows_html}
                         </table>
                     </div>
                     <br/>
-                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
+                    <button type="submit">ذخیره تخصیص‌ها در product_group_map.xlsx</button>
                 </form>
 
+                <a class="footer-link" href="/group-items">بازگشت</a>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/group-items-save", response_class=HTMLResponse)
+async def group_items_save(request: Request):
+    nav_html = build_nav("items")
+
+    form = await request.form()
+    codes = form.getlist("prod_code")
+    names = form.getlist("prod_name")
+    groups = form.getlist("prod_group")
+
+    new_rows = []
+    for code, name, grp in zip(codes, names, groups):
+        code_key = canonicalize_code(code)
+        if not code_key:
+            continue
+        grp_name = str(grp).strip()
+        if not grp_name:
+            # اگر گروه انتخاب نشده، مپی برایش نمی‌سازیم
+            continue
+        name_val = str(name).strip() if name is not None else ""
+        new_rows.append(
+            {
+                "ProductCode": code_key,
+                "ProductName": name_val,
+                "Group": grp_name,
+            }
+        )
+
+    df_new = pd.DataFrame(
+        new_rows, columns=["ProductCode", "ProductName", "Group"])
+
+    df_old = load_product_group_map()
+    if df_old.empty:
+        df_all = df_new
+    else:
+        df_old = df_old.copy()
+        if not df_new.empty:
+            codes_set = set(df_new["ProductCode"])
+            df_old = df_old[~df_old["ProductCode"].isin(codes_set)]
+            df_all = pd.concat([df_old, df_new], ignore_index=True)
+            df_all = df_all.drop_duplicates(
+                subset=["ProductCode"], keep="last")
+        else:
+            df_all = df_old
+
+    if not df_all.empty:
+        save_product_group_map(df_all)
+        msg_html = """
+        <div class="message message-success">
+            تخصیص کالاها به گروه‌ها با موفقیت در <code>product_group_map.xlsx</code> ذخیره شد ✅
+        </div>
+        """
+    else:
+        msg_html = """
+        <div class="message message-error">
+            هیچ تخصیص معتبری برای ذخیره ثبت نشد.
+        </div>
+        """
+
+    # برای نمایش، دوباره مپ را بخوانیم
+    pg_map = load_product_group_map()
+    if not pg_map.empty:
+        map_html = """
+        <div class="table-wrapper">
+        """ + pg_map.to_html(index=False, border=0) + "</div>"
+    else:
+        map_html = "<p>فعلاً مپی برای کالاها ثبت نشده است.</p>"
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>تخصیص کالا به گروه</title>
+            {BASE_CSS}
+        </head>
+        <body>
+            <div class="container">
+                {nav_html}
+
+                <h1>تخصیص کالا به گروه</h1>
+                {msg_html}
+
+                <h2>مپ فعلی کالا → گروه</h2>
+                {map_html}
+
+                <a class="footer-link" href="/group-items">بازگشت به صفحهٔ بارگذاری اکسل کالاها</a>
+                <br/>
                 <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
             </div>
         </body>
