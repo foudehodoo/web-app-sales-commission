@@ -252,42 +252,19 @@ BASE_CSS = """
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
     direction: rtl;
-    background: linear-gradient(135deg, #eff6ff, #f9fafb);
+    background: radial-gradient(circle at top left, #eff6ff 0, #f9fafb 45%, #f3f4f6 100%);
     margin: 0;
 }
 .container {
-    max-width: 1100px;
+    max-width: 1150px;
     margin: 32px auto;
     background: #ffffff;
-    padding: 24px 32px;
-    border-radius: 16px;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
-}
-.navbar {
-    margin-bottom: 16px;
-    display: flex;
-    gap: 8px;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 8px;
-}
-.navbar a {
-    display: inline-block;
-    padding: 6px 10px;
-    font-size: 13px;
-    color: #4b5563;
-    text-decoration: none;
-    border-radius: 999px;
-}
-.navbar a.active {
-    background: #2563eb;
-    color: #ffffff;
-    box-shadow: 0 3px 8px rgba(37, 99, 235, 0.4);
-}
-.navbar a:hover {
-    background: #e5e7eb;
+    padding: 24px 32px 32px;
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
 }
 h1 {
-    margin-top: 8px;
+    margin-top: 0;
     color: #111827;
     font-size: 22px;
 }
@@ -309,33 +286,34 @@ button {
     font-size: 13px;
     cursor: pointer;
     box-shadow: 0 6px 14px rgba(37, 99, 235, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 button:hover {
     background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
 }
 label {
     font-weight: 600;
     font-size: 13px;
 }
 input[type="file"],
-input[type="number"],
-input[type="text"],
-select {
+input[type="number"] {
     width: 100%;
-    padding: 6px 8px;
-    border-radius: 8px;
+    padding: 7px 9px;
+    border-radius: 10px;
     border: 1px solid #d1d5db;
     font-size: 13px;
     box-sizing: border-box;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    background-color: #f9fafb;
 }
 input[type="file"]:focus,
-input[type="number"]:focus,
-input[type="text"]:focus,
-select:focus {
+input[type="number"]:focus {
     outline: none;
     border-color: #2563eb;
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+    background-color: #ffffff;
 }
 .form-row {
     margin-bottom: 14px;
@@ -344,20 +322,25 @@ small {
     font-size: 11px;
     color: #6b7280;
 }
+
+/* کارت‌های راهنما برای ساختار فایل‌ها */
 .summary-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin: 16px 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 18px 0 10px;
 }
 .summary-card {
-    flex: 1 1 160px;
-    background: #f9fafb;
-    border-radius: 12px;
-    padding: 10px 14px;
-    border: 1px solid #e5e7eb;
     position: relative;
+    background: #f9fafb;
+    border-radius: 16px;
+    padding: 12px 14px 10px 14px;
+    border: 1px solid #e5e7eb;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .summary-card::before {
     content: "";
@@ -376,19 +359,108 @@ small {
 .summary-checks::before {
     background: linear-gradient(180deg, #d97706, #fbbf24);
 }
-.summary-commission::before {
-    background: linear-gradient(180deg, #7c3aed, #a855f7);
+.summary-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 16px 35px rgba(15, 23, 42, 0.16);
+    border-color: #d1d5db;
 }
-.summary-card .label {
+.summary-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.summary-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.summary-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    background: #e5edff;
+}
+.summary-sales .summary-icon {
+    background: #e0ecff;
+}
+.summary-payments .summary-icon {
+    background: #dcfce7;
+}
+.summary-checks .summary-icon {
+    background: #fef3c7;
+}
+.summary-title-main {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111827;
+}
+.summary-title-sub {
     font-size: 11px;
     color: #6b7280;
 }
-.summary-card .value {
-    font-weight: 600;
+.summary-card-body {
     margin-top: 4px;
-    font-size: 13px;
-    color: #111827;
 }
+.hint-title {
+    font-size: 11px;
+    color: #4b5563;
+    margin-bottom: 4px;
+}
+.hint-note {
+    font-size: 11px;
+    color: #9ca3af;
+    margin-top: 4px;
+}
+.pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.badge-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: #eef2ff;
+    color: #3730a3;
+    white-space: nowrap;
+}
+.pill-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 2px;
+    margin-bottom: 2px;
+    color: #4b5563;
+}
+.pill-section {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+.pill-button {
+    border-radius: 999px;
+    border: 0;
+    padding: 3px 10px;
+    font-size: 11px;
+    background: #e5edff;
+    color: #1d4ed8;
+    cursor: pointer;
+    box-shadow: none;
+}
+.pill-button:hover {
+    background: #dbeafe;
+    transform: none;
+    box-shadow: none;
+}
+.hint-hidden {
+    display: none;
+}
+
+/* جدول‌ها و بقیه چیزها */
 .table-wrapper {
     overflow-x: auto;
     margin-top: 8px;
@@ -446,27 +518,6 @@ hr {
     border: none;
     border-top: 1px solid #e5e7eb;
     margin: 24px 0;
-}
-.badge-pill {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    background: #eef2ff;
-    color: #3730a3;
-}
-.checkbox-center {
-    text-align: center;
-}
-.message {
-    margin: 12px 0;
-    font-size: 13px;
-}
-.message-success {
-    color: #047857;
-}
-.message-error {
-    color: #b91c1c;
 }
 </style>
 """
@@ -893,7 +944,6 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    nav_html = build_nav("main")
     html = f"""
     <html>
         <head>
@@ -903,46 +953,148 @@ async def index():
         </head>
         <body>
             <div class="container">
-                {nav_html}
                 <h1>محاسبه پورسانت فروش</h1>
                 <p>مرحله ۱ از ۲ – لطفاً فایل‌های اکسل فروش، پرداخت‌ها و در صورت وجود چک‌ها را انتخاب کن.</p>
 
                 <div class="summary-grid">
+
+                    <!-- فروش‌ها -->
                     <div class="summary-card summary-sales">
-                        <div class="label">فایل فروش‌ها</div>
-                        <div class="value">ستون‌های پیشنهادی:</div>
-                        <div class="value" style="font-weight:400; font-size:12px;">
-                            <span class="badge-pill">InvoiceID</span>
-                            <span class="badge-pill">InvoiceDate</span>
-                            <span class="badge-pill">DueDate</span>
-                            <span class="badge-pill">CustomerCode</span>
-                            <span class="badge-pill">CustomerName</span>
-                            <span class="badge-pill">ProductGroup / ProductCode</span>
-                            <span class="badge-pill">Amount</span>
-                            <span class="badge-pill">Salesperson</span>
+                        <div class="summary-card-header">
+                            <div class="summary-title">
+                                <div class="summary-icon">🧾</div>
+                                <div>
+                                    <div class="summary-title-main">فایل فروش‌ها</div>
+                                    <div class="summary-title-sub">گزارش فاکتورهای فروش از نرم‌افزار حسابداری</div>
+                                </div>
+                            </div>
+                            <button type="button" class="pill-button" data-toggle="hint" data-target="sales-hint">
+                                نمایش راهنما
+                            </button>
+                        </div>
+                        <div id="sales-hint" class="summary-card-body hint-hidden">
+                            <div class="hint-title">ستون‌های پیشنهادی (یا معادل فارسی‌شان):</div>
+
+                            <div class="pill-section">
+                                <div class="pill-section-title">ستون‌های اصلی فاکتور</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">InvoiceID (شماره فاکتور / شماره سند)</span>
+                                    <span class="badge-pill">InvoiceDate (تاریخ فاکتور – شمسی)</span>
+                                    <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
+                                    <span class="badge-pill">CustomerName (نام مشتری / طرف حساب)</span>
+                                    <span class="badge-pill">Amount (جمع کل فاکتور)</span>
+                                </div>
+                            </div>
+
+                            <div class="pill-section">
+                                <div class="pill-section-title">ستون‌های مربوط به کالا</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">ProductCode (کد کالا)</span>
+                                    <span class="badge-pill">ProductName (نام کالا)</span>
+                                    <span class="badge-pill">ProductGroup (گروه کالا – برای تعیین پورسانت)</span>
+                                </div>
+                            </div>
+
+                            <div class="pill-section">
+                                <div class="pill-section-title">ستون‌های اختیاری</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">Salesperson (نام ویزیتور)</span>
+                                    <span class="badge-pill">DueDate (تاریخ سررسید، اگر در خود سیستم دارید)</span>
+                                </div>
+                            </div>
+
+                            <p class="hint-note">
+                                لازم نیست اسم ستون‌ها دقیقاً همین باشد؛ لودر فروش تلاش می‌کند اسم‌های رایج فارسی
+                                (مثل «شماره فاکتور»، «نام طرف حساب»، «جمع کل» و …) را به این ستون‌های استاندارد تبدیل کند.
+                            </p>
                         </div>
                     </div>
+
+                    <!-- پرداخت‌ها -->
                     <div class="summary-card summary-payments">
-                        <div class="label">فایل پرداخت‌ها</div>
-                        <div class="value">ستون‌های پیشنهادی (پس از تبدیل):</div>
-                        <div class="value" style="font-weight:400; font-size:12px;">
-                            <span class="badge-pill">PaymentID</span>
-                            <span class="badge-pill">PaymentDate</span>
-                            <span class="badge-pill">Amount</span>
-                            <span class="badge-pill">CustomerCode</span>
-                            <span class="badge-pill">CustomerName</span>
-                            <span class="badge-pill">Description</span>
+                        <div class="summary-card-header">
+                            <div class="summary-title">
+                                <div class="summary-icon">🏦</div>
+                                <div>
+                                    <div class="summary-title-main">فایل پرداخت‌ها</div>
+                                    <div class="summary-title-sub">خروجی دفتر حساب بانکی / دریافت‌ها</div>
+                                </div>
+                            </div>
+                            <button type="button" class="pill-button" data-toggle="hint" data-target="payments-hint">
+                                نمایش راهنما
+                            </button>
+                        </div>
+                        <div id="payments-hint" class="summary-card-body hint-hidden">
+                            <div class="hint-title">فرمت‌های رایج که برنامه پشتیبانی می‌کند:</div>
+
+                            <div class="pill-section">
+                                <div class="pill-section-title">۱) دفتر حساب بانکی (مثل پرداخت.xlsx که فرستادی)</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">تاریخ</span>
+                                    <span class="badge-pill">شماره / شماره سند</span>
+                                    <span class="badge-pill">نوع</span>
+                                    <span class="badge-pill">واریزی</span>
+                                    <span class="badge-pill">برداشتی</span>
+                                    <span class="badge-pill">کد طرف حساب</span>
+                                    <span class="badge-pill">واریز یا برداشت کننده (نام مشتری)</span>
+                                    <span class="badge-pill">توضیحات</span>
+                                </div>
+                                <p class="hint-note">
+                                    لودر پرداخت‌ها از روی این ستون‌ها، ردیف‌های «واریزی» را پیدا می‌کند و آن‌ها را
+                                    به فرم استاندارد تبدیل می‌کند.
+                                </p>
+                            </div>
+
+                            <div class="pill-section">
+                                <div class="pill-section-title">۲) فرم ساده با هدر مستقیم</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">PaymentDate (یا «تاریخ» / «تاریخ سند»)</span>
+                                    <span class="badge-pill">Amount (یا «مبلغ» / «واریزی» / «بستانکار»)</span>
+                                    <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
+                                    <span class="badge-pill">CustomerName (اختیاری)</span>
+                                    <span class="badge-pill">Description (شرح / توضیحات)</span>
+                                    <span class="badge-pill">PaymentID (شماره سند / شماره تراکنش)</span>
+                                </div>
+                            </div>
+
+                            <p class="hint-note">
+                                در نهایت داخل برنامه همه‌ی پرداخت‌ها به شکل استاندارد
+                                <b>PaymentID, PaymentDate, Amount, CustomerCode, CustomerName, Description</b>
+                                ذخیره می‌شوند.
+                            </p>
                         </div>
                     </div>
+
+                    <!-- چک‌ها -->
                     <div class="summary-card summary-checks">
-                        <div class="label">فایل چک‌ها (اختیاری)</div>
-                        <div class="value">ستون‌های پیشنهادی:</div>
-                        <div class="value" style="font-weight:400; font-size:12px;">
-                            <span class="badge-pill">CheckNumber</span>
-                            <span class="badge-pill">CustomerCode</span>
-                            <span class="badge-pill">Amount</span>
-                            <span class="badge-pill">BankName</span>
-                            <span class="badge-pill">Description</span>
+                        <div class="summary-card-header">
+                            <div class="summary-title">
+                                <div class="summary-icon">💳</div>
+                                <div>
+                                    <div class="summary-title-main">فایل چک‌ها (اختیاری)</div>
+                                    <div class="summary-title-sub">اگر می‌خواهی پرداخت‌های نوع «چک» را دقیق به مشتری وصل کنیم</div>
+                                </div>
+                            </div>
+                            <button type="button" class="pill-button" data-toggle="hint" data-target="checks-hint">
+                                نمایش راهنما
+                            </button>
+                        </div>
+                        <div id="checks-hint" class="summary-card-body hint-hidden">
+                            <div class="pill-section">
+                                <div class="pill-section-title">ستون‌های پیشنهادی:</div>
+                                <div class="pill-row">
+                                    <span class="badge-pill">CheckNumber (شماره چک)</span>
+                                    <span class="badge-pill">CustomerCode (کد مشتری / کد طرف حساب)</span>
+                                    <span class="badge-pill">CustomerName (نام صاحب چک)</span>
+                                    <span class="badge-pill">Amount (مبلغ چک)</span>
+                                    <span class="badge-pill">BankName (نام بانک)</span>
+                                    <span class="badge-pill">Description (توضیحات اضافی)</span>
+                                </div>
+                            </div>
+                            <p class="hint-note">
+                                اگر در توضیحات پرداخت‌ها شماره‌ی چک نوشته شده باشد، برنامه از روی ستون <b>CheckNumber</b>
+                                می‌تواند پرداخت‌های نوع «Check» را به مشتری درست وصل کند.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -951,24 +1103,42 @@ async def index():
                     <div class="form-row">
                         <label>فایل اکسل فروش‌ها</label><br/>
                         <input type="file" name="sales_file" accept=".xlsx,.xls" required />
-                        <small>این فایل مبنای محاسبه پورسانت است.</small>
+                        <small>این فایل مبنای محاسبه پورسانت است (خروجی فاکتورهای فروش).</small>
                     </div>
 
                     <div class="form-row">
                         <label>فایل اکسل پرداخت‌ها</label><br/>
                         <input type="file" name="payments_file" accept=".xlsx,.xls" required />
-                        <small>پرداخت‌های نقدی و وصول چک‌ها در این فایل است.</small>
+                        <small>پرداخت‌های نقدی و واریزی‌ها / وصول چک‌ها در این فایل قرار دارند.</small>
                     </div>
 
                     <div class="form-row">
                         <label>فایل اکسل چک‌ها (اختیاری)</label><br/>
                         <input type="file" name="checks_file" accept=".xlsx,.xls" />
-                        <small>برای اتصال پرداخت‌های حاوی شماره چک به مشتری استفاده می‌شود.</small>
+                        <small>برای اتصال پرداخت‌هایی که در توضیحات‌شان شماره چک آمده استفاده می‌شود.</small>
                     </div>
 
-                    <button type="submit">مرحله بعد: تنظیم گروه‌ها و پورسانت</button>
+                    <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>
                 </form>
             </div>
+
+            <script>
+            document.addEventListener('DOMContentLoaded', function () {{
+                document.querySelectorAll('[data-toggle="hint"]').forEach(function (btn) {{
+                    btn.addEventListener('click', function () {{
+                        var targetId = btn.getAttribute('data-target');
+                        var panel = document.getElementById(targetId);
+                        if (!panel) return;
+                        panel.classList.toggle('hint-hidden');
+                        if (panel.classList.contains('hint-hidden')) {{
+                            btn.textContent = 'نمایش راهنما';
+                        }} else {{
+                            btn.textContent = 'بستن راهنما';
+                        }}
+                    }});
+                }});
+            }});
+            </script>
         </body>
     </html>
     """
