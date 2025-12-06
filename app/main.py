@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.services.sales_excel_loader import load_sales_excel
 from app.services.payments_excel_loader import load_payments_excel
+from app.services.checks_excel_loader import load_checks_excel
 
 from datetime import datetime
 import jdatetime
@@ -709,13 +710,13 @@ def extract_customer_for_payment(
     ترتیب اعتماد:
     1) اگر نام مشتری را می‌توانیم به‌طور یکتا از روی فروش به کد وصل کنیم → همان
     2) اگر CustomerCode پر است → همان (استاندارد شده)
-    3) اگر نوع Check است، از روی فایل چک‌ها
+    3) اگر نوع Check است، از روی فایل چک‌ها (CheckNumber → CustomerCode/Name)
     """
     stype = row.get("SourceType")
     code_raw = row.get("CustomerCode")
     name = row.get("CustomerName")
 
-    # 1) ابتدا از روی نام (اگر map داریم)
+    # 1) ابتدا از روی نام پرداخت (اگر map داریم)
     if name_code_map is not None and pd.notna(name):
         key = name_key_for_matching(name)
         if key:
@@ -723,19 +724,43 @@ def extract_customer_for_payment(
             if mapped:
                 return mapped
 
-    # 2) اگر کد طرف حساب پر است، از همان استفاده کن
+    # 2) اگر خود پرداخت کد طرف حساب دارد
     if pd.notna(code_raw) and str(code_raw).strip() != "":
         return canonicalize_code(code_raw)
 
     # 3) اگر پرداخت از نوع چک است، سعی کن از روی فایل چک‌ها پیدا کنی
-    if stype == "Check":
+    if stype == "Check" and checks_df is not None and not checks_df.empty:
         desc = str(row.get("Description") or "")
-        m = re.search(r"(CHK-\d+)", desc)
+
+        # سعی می‌کنیم یک عدد ۳ تا ۶ رقمی (شماره چک) را از توضیحات دربیاوریم
+        m = re.search(r"\b(\d{3,6})\b", desc)
         if m and "CheckNumber" in checks_df.columns:
-            check_number = m.group(1)
-            match = checks_df.loc[checks_df["CheckNumber"] == check_number]
-            if not match.empty:
-                return canonicalize_code(match.iloc[0]["CustomerCode"])
+            num = m.group(1)
+
+            # فقط رقم‌ها را نگه می‌داریم برای مقایسه مطمئن
+            check_keys = (
+                checks_df["CheckNumber"]
+                .astype(str)
+                .str.replace(r"\D", "", regex=True)
+            )
+            matches = checks_df.loc[check_keys == num]
+
+            if not matches.empty:
+                chk_row = matches.iloc[0]
+
+                # اگر در فایل چک‌ها CustomerCode داشتیم، مستقیم از همان استفاده کن
+                if "CustomerCode" in chk_row and pd.notna(chk_row["CustomerCode"]):
+                    return canonicalize_code(chk_row["CustomerCode"])
+
+                # در غیر این صورت، سعی کن از روی CustomerName چک، کد را از map بسازی
+                if name_code_map is not None and "CustomerName" in chk_row:
+                    chk_name = chk_row["CustomerName"]
+                    if pd.notna(chk_name):
+                        key2 = name_key_for_matching(chk_name)
+                        if key2:
+                            mapped2 = name_code_map.get(key2)
+                            if mapped2:
+                                return mapped2
 
     return None
 
@@ -1092,7 +1117,7 @@ async def upload_all(
     df_pay = load_payments_excel(payments_file.file)
 
     if checks_file is not None and checks_file.filename:
-        df_chk = pd.read_excel(checks_file.file)
+        df_chk = load_checks_excel(checks_file.file)
     else:
         df_chk = pd.DataFrame()
 
