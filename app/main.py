@@ -709,58 +709,82 @@ def extract_customer_for_payment(
     تشخیص کد مشتری برای هر پرداخت:
     ترتیب اعتماد:
     1) اگر نام مشتری را می‌توانیم به‌طور یکتا از روی فروش به کد وصل کنیم → همان
-    2) اگر CustomerCode پر است → همان (استاندارد شده)
-    3) اگر نوع Check است، از روی فایل چک‌ها (CheckNumber → CustomerCode/Name)
+    2) اگر نوع پرداخت "Check" باشد → از روی فایل چک‌ها (CheckNumber → CustomerName → کد مشتری)
+    3) برای بقیه‌ی پرداخت‌ها، اگر CustomerCode پر است → همان
     """
     stype = row.get("SourceType")
     code_raw = row.get("CustomerCode")
     name = row.get("CustomerName")
+    desc_str = str(row.get("Description") or "")
 
-    # 1) ابتدا از روی نام پرداخت (اگر map داریم)
+    # 1) اگر از روی نام (در خود پرداخت) می‌توانیم مپ یکتا به کد مشتری پیدا کنیم
     if name_code_map is not None and pd.notna(name):
         key = name_key_for_matching(name)
         if key:
             mapped = name_code_map.get(key)
             if mapped:
-                return mapped
+                return canonicalize_code(mapped)
 
-    # 2) اگر خود پرداخت کد طرف حساب دارد
-    if pd.notna(code_raw) and str(code_raw).strip() != "":
-        return canonicalize_code(code_raw)
-
-    # 3) اگر پرداخت از نوع چک است، سعی کن از روی فایل چک‌ها پیدا کنی
+    # 2) اگر نوع پرداخت چک است، اولویت ۱۰۰٪ با فایل چک‌هاست
     if stype == "Check" and checks_df is not None and not checks_df.empty:
-        desc = str(row.get("Description") or "")
+        candidates: list[str] = []
 
-        # سعی می‌کنیم یک عدد ۳ تا ۶ رقمی (شماره چک) را از توضیحات دربیاوریم
-        m = re.search(r"\b(\d{3,6})\b", desc)
-        if m and "CheckNumber" in checks_df.columns:
-            num = m.group(1)
+        # 2.a از ستون CheckNumber که در لودر پرداخت‌ها ساخته‌ایم
+        if "CheckNumber" in row.index:
+            check_val = row["CheckNumber"]
+            if pd.notna(check_val):
+                candidates.append(str(check_val))
 
-            # فقط رقم‌ها را نگه می‌داریم برای مقایسه مطمئن
-            check_keys = (
+        # 2.b از توضیحات (اگر عدد ۳ تا ۱۰ رقمی داخلش باشد)
+        m = re.search(r"(\d{3,10})", desc_str)
+        if m:
+            candidates.append(m.group(1))
+
+        # آماده‌سازی ستون شماره چک در دیتافریم چک‌ها
+        chk_nums = None
+        if "CheckNumber" in checks_df.columns:
+            chk_nums = (
                 checks_df["CheckNumber"]
                 .astype(str)
-                .str.replace(r"\D", "", regex=True)
+                .str.replace(r"\\D", "", regex=True)
+                .str.lstrip("0")
             )
-            matches = checks_df.loc[check_keys == num]
+
+        for cand in candidates:
+            num = re.sub(r"\\D", "", str(cand))
+            num = num.lstrip("0")
+            if not num:
+                continue
+
+            if chk_nums is not None:
+                matches = checks_df.loc[chk_nums == num]
+            else:
+                matches = pd.DataFrame()
 
             if not matches.empty:
                 chk_row = matches.iloc[0]
 
-                # اگر در فایل چک‌ها CustomerCode داشتیم، مستقیم از همان استفاده کن
+                # اگر خود فایل چک‌ها CustomerCode داشته باشد:
                 if "CustomerCode" in chk_row and pd.notna(chk_row["CustomerCode"]):
                     return canonicalize_code(chk_row["CustomerCode"])
 
-                # در غیر این صورت، سعی کن از روی CustomerName چک، کد را از map بسازی
+                # در غیر این صورت، از روی "صاحب حساب" → map نام→کد فروش‌ها را چک می‌کنیم
                 if name_code_map is not None and "CustomerName" in chk_row:
                     chk_name = chk_row["CustomerName"]
                     if pd.notna(chk_name):
                         key2 = name_key_for_matching(chk_name)
-                        if key2:
-                            mapped2 = name_code_map.get(key2)
-                            if mapped2:
-                                return mapped2
+                        mapped2 = name_code_map.get(key2)
+                        if mapped2:
+                            return canonicalize_code(mapped2)
+
+        # اگر برای ردیف‌های چک از فایل چک‌ها چیزی پیدا نکردیم،
+        # بهتر است None برگردانیم تا در خروجی بفهمی این پرداخت بی‌صاحب مانده،
+        # نه این‌که اشتباهی به کدی مثل "12/02" وصل شود.
+        return None
+
+    # 3) برای سایر انواع پرداخت (غیر از Check)، اگر CustomerCode داریم، همان را استفاده می‌کنیم
+    if pd.notna(code_raw) and str(code_raw).strip() != "":
+        return canonicalize_code(code_raw)
 
     return None
 
