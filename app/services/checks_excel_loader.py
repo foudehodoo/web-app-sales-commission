@@ -1,16 +1,21 @@
+# app/services/checks_excel_loader.py
 from __future__ import annotations
 
 from typing import IO, Any
 import pandas as pd
+import re
 
 
 def load_checks_excel(file_obj: IO[Any]) -> pd.DataFrame:
     """
-    خواندن فایل «لیست کليه اسناد دريافتني» (چک ها.xlsx) و تبدیل آن به دیتافریم استاندارد.
+    خواندن فایل «لیست کليه اسناد دريافتني» (چک ها.xlsx) و تبدیل آن
+    به دیتافریم استاندارد.
 
     خروجی حداقل این ستون‌ها را دارد:
-      - CheckNumber : شماره چک (فقط رقم، بدون صفرهای اضافه‌ی اول)
+      - CheckNumber : شماره چک (فقط رقم، بدون صفرهای اول)
       - CustomerName: صاحب حساب چک
+      - Amount      : مبلغ چک (عددی)
+    به‌علاوه بقیه‌ی ستون‌های اصلی خود فایل.
     """
     file_obj.seek(0)
     raw = pd.read_excel(file_obj, header=None)
@@ -32,20 +37,28 @@ def load_checks_excel(file_obj: IO[Any]) -> pd.DataFrame:
     df = df.dropna(how="all")
 
     # مپ کردن اسم ستون‌ها به اسامی استاندارد
-    rename_map = {}
+    rename_map: dict[Any, str] = {}
     for col in df.columns:
         name = str(col).strip()
-        if name in ["رديف چك", "ردیف چک"]:
+        if name in ("رديف چك", "ردیف چک"):
             rename_map[col] = "CheckIndex"
-        elif name in ["شماره/سريال چك", "شماره/سریال چک"]:
+        elif name in ("شماره/سريال چك", "شماره/سریال چک"):
             rename_map[col] = "CheckSerial"
-        elif name in ["صاحب حساب"]:
+        elif name in ("صاحب حساب",):
             rename_map[col] = "CustomerName"
+        elif name in ("نام طرف حساب",):
+            rename_map[col] = "AccountName"
+        elif name in ("سررسيد", "تاريخ سررسيد", "تاریخ سررسید"):
+            rename_map[col] = "DueDate"
+        elif name in ("مبلغ", "مبلغ چك", "مبلغ چک"):
+            rename_map[col] = "Amount"
+        elif name in ("وضعيت", "وضعیت"):
+            rename_map[col] = "Status"
 
     if rename_map:
         df = df.rename(columns=rename_map)
 
-    # ساختن CheckNumber از روی شماره سریال (یا در صورت نبود، از روی ردیف چک)
+    # ساختن CheckNumber از روی شماره سریال (یا در صورت نبود، ردیف چک)
     check_source = None
     if "CheckSerial" in df.columns:
         check_source = df["CheckSerial"]
@@ -55,10 +68,14 @@ def load_checks_excel(file_obj: IO[Any]) -> pd.DataFrame:
     if check_source is not None:
         check_numbers = (
             check_source.astype(str)
-            .str.replace(r"\\D", "", regex=True)  # فقط رقم
-            .str.lstrip("0")                      # حذف صفرهای ابتدایی
+            .str.replace(r"\D", "", regex=True)  # فقط رقم
+            .str.lstrip("0")                     # حذف صفرهای ابتدایی
         )
         df["CheckNumber"] = check_numbers
         df = df[df["CheckNumber"] != ""]
+
+    # تبدیل مبلغ به عدد
+    if "Amount" in df.columns:
+        df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0)
 
     return df.reset_index(drop=True)

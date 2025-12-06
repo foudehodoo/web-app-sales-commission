@@ -1115,7 +1115,47 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
     return "<hr/>" + "\n".join(parts)
 
 
+def build_debug_checks_html(checks_df: pd.DataFrame) -> str:
+    """
+    دیباگ چک‌ها:
+    - می‌خواهیم ببینیم CheckNumber، مبلغ و صاحب حساب بعد از لود به چه شکل شده‌اند.
+    """
+    if checks_df is None or checks_df.empty:
+        return "<hr/><p>هیچ چکی بارگذاری نشده یا دیتای چک‌ها خالی است.</p>"
+
+    cols: list[str] = []
+    for c in [
+        "CheckNumber",
+        "CheckSerial",
+        "CheckIndex",
+        "CustomerName",
+        "AccountName",
+        "Amount",
+        "DueDate",
+        "Status",
+    ]:
+        if c in checks_df.columns:
+            cols.append(c)
+
+    if not cols:
+        return "<hr/><p>ستون‌های قابل استفاده‌ای برای دیباگ چک‌ها پیدا نشد.</p>"
+
+    checks_view = checks_df[cols].copy().head(200)
+
+    html_parts = [
+        "<hr/>",
+        "<h2>🧪 دیباگ چک‌ها</h2>",
+        '<p style="font-size:12px;color:#6b7280;">'
+        "این جدول بخشی از داده‌های فایل چک‌ها بعد از پردازش است. اگر ستون CheckNumber یا Amount خالی است، مشکل از لودر چک‌هاست."
+        "</p>",
+        '<div class="table-wrapper">',
+        checks_view.to_html(index=False, border=0),
+        "</div>",
+    ]
+    return "\n".join(html_parts)
+
 # ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -1559,6 +1599,7 @@ async def calculate_commission(request: Request):
     salesperson_table_html = salesperson_result.to_html(index=False, border=0)
 
     debug_names_html = build_debug_names_html(sales_result, payments_result)
+    debug_checks_html = build_debug_checks_html(df_chk)
 
     html = f"""
     <html>
@@ -1602,6 +1643,7 @@ async def calculate_commission(request: Request):
                 </div>
 
                 {debug_names_html}
+                {debug_checks_html}
 
                 <hr/>
 
