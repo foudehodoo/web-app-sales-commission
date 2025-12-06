@@ -875,6 +875,11 @@ def prepare_payments(
         payments_df["CustomerCode"] = None
     if "CustomerName" not in payments_df.columns:
         payments_df["CustomerName"] = None
+    # نرمال‌سازی کد طرف حساب برای جلوگیری از نمایش 13.0 و ...
+    if "CustomerCode" in payments_df.columns:
+        payments_df["CustomerCode"] = payments_df["CustomerCode"].map(
+            lambda v: canonicalize_code(v) if pd.notna(v) else None
+        )
 
     # map نام→کد
     name_code_map = build_name_code_mapping(sales_df)
@@ -900,6 +905,12 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
     - تعیین درصد پورسانت
     """
     sales_df = sales_df.copy()
+    # نرمال‌سازی کدها برای نمایش (حذف .0 و تبدیل به رشته تمیز)
+    for col in ["InvoiceID", "CustomerCode", "ProductCode"]:
+        if col in sales_df.columns:
+            sales_df[col] = sales_df[col].map(
+                lambda v: canonicalize_code(v) if pd.notna(v) else None
+            )
 
     if "InvoiceDate" not in sales_df.columns:
         raise ValueError("در فایل فروش ستونی به نام 'InvoiceDate' پیدا نشد.")
@@ -1181,7 +1192,7 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
     return html
 
 
-def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) -> str:
+def build_debug_checks_html(checks_df, payments_df=None):
     """
     دیباگ چک‌ها:
     - نشان دادن شماره چک، مبلغ، صاحب حساب و ...
@@ -1191,7 +1202,7 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
         return ""
 
     # ستون‌هایی که نمایش می‌دهیم
-    cols: list[str] = []
+    cols = []
     for c in [
         "CheckNumber",
         "CustomerName",
@@ -1210,11 +1221,12 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
     checks_view = checks_df[cols].copy().head(200)
 
     # ست شماره چک‌هایی که در پرداخت‌ها استفاده شده‌اند
-    matched_numbers: set[str] = set()
+    matched_numbers = set()
     if (
         payments_df is not None
         and not payments_df.empty
         and "CheckNumber" in payments_df.columns
+        and "SourceType" in payments_df.columns
     ):
         ser = (
             payments_df.loc[payments_df["SourceType"]
@@ -1226,7 +1238,8 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
         matched_numbers = set(v for v in ser_norm.tolist() if v)
 
     # ردیف‌های HTML
-    rows_html: list[str] = []
+    import re  # برای اطمینان اگر بالا ایمپورت نکرده باشی
+    rows_html = []
 
     for _, row in checks_view.iterrows():
         raw_val = row.get("CheckNumber", "")
@@ -1237,6 +1250,8 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
         cell_html = []
         for col in cols:
             val = row.get(col, "")
+            # استفاده از pd.notna (اگر بالا ایمپورت داری، این هم مشکلی نداره)
+            import pandas as pd
             cell_html.append(f"<td>{val if pd.notna(val) else ''}</td>")
 
         rows_html.append(f"<tr{row_class}>" + "".join(cell_html) + "</tr>")
@@ -1252,11 +1267,12 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
         "</tbody></table></div>",
     ]
 
-    inner = """
-    <p style="font-size:12px;color:#6b7280;">
-    ردیف‌های سبز یعنی برای این شماره چک، پرداخت متناظر در فایل پرداخت‌ها پیدا شده است.
-    </p>
-    """ + "\n".join(table_html)
+    inner = (
+        '<p style="font-size:12px;color:#6b7280;">'
+        "ردیف‌های سبز یعنی برای این شماره چک، پرداخت متناظر در فایل پرداخت‌ها پیدا شده است."
+        "</p>"
+        + "\n".join(table_html)
+    )
 
     html = f"""
     <div class="debug-section">
@@ -1272,46 +1288,6 @@ def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) 
     </div>
     """
     return html
-
-
-def build_debug_checks_html(checks_df: pd.DataFrame) -> str:
-    """
-    دیباگ چک‌ها:
-    - می‌خواهیم ببینیم CheckNumber، مبلغ و صاحب حساب بعد از لود به چه شکل شده‌اند.
-    """
-    if checks_df is None or checks_df.empty:
-        return "<hr/><p>هیچ چکی بارگذاری نشده یا دیتای چک‌ها خالی است.</p>"
-
-    cols: list[str] = []
-    for c in [
-        "CheckNumber",
-        "CheckSerial",
-        "CheckIndex",
-        "CustomerName",
-        "AccountName",
-        "Amount",
-        "DueDate",
-        "Status",
-    ]:
-        if c in checks_df.columns:
-            cols.append(c)
-
-    if not cols:
-        return "<hr/><p>ستون‌های قابل استفاده‌ای برای دیباگ چک‌ها پیدا نشد.</p>"
-
-    checks_view = checks_df[cols].copy().head(200)
-
-    html_parts = [
-        "<hr/>",
-        "<h2>🧪 دیباگ چک‌ها</h2>",
-        '<p style="font-size:12px;color:#6b7280;">'
-        "این جدول بخشی از داده‌های فایل چک‌ها بعد از پردازش است. اگر ستون CheckNumber یا Amount خالی است، مشکل از لودر چک‌هاست."
-        "</p>",
-        '<div class="table-wrapper">',
-        checks_view.to_html(index=False, border=0),
-        "</div>",
-    ]
-    return "\n".join(html_parts)
 
 # ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
 
