@@ -626,6 +626,64 @@ small {
     padding: 12px 14px;
 }
 
+/* -------------- دیباگ -------------- */
+
+.debug-section {
+    margin-top: 24px;
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.debug-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111827;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.debug-toggle-btn {
+    background: #f3f4f6;
+    color: #374151;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 11px;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+}
+
+.debug-toggle-btn:hover {
+    background: #e5e7eb;
+}
+
+.debug-panel {
+    border-radius: 12px;
+    border: 1px dashed #e5e7eb;
+    padding: 10px 12px;
+    background: #f9fafb;
+    margin-bottom: 4px;
+}
+
+.debug-hidden {
+    display: none;
+}
+
+/* ردیف‌هایی از چک‌ها که متناظر در پرداخت‌ها دارند */
+.matched-check-row {
+    background-color: #ecfdf3;
+}
+
+.matched-check-row:hover {
+    background-color: #dcfce7;
+}
+
 /* ---------------- سایر ---------------- */
 
 .footer-link {
@@ -1023,17 +1081,19 @@ def compute_commissions(
 
 def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) -> str:
     """
-    بخش دیباگ:
+    بخش دیباگ نام‌ها:
     - نام مشتری در فروش + نام نرمال‌شده
     - نام مشتری در پرداخت + نام نرمال‌شده + کد شناسایی شده
     - نگاشت name_key → کد مشتری
+    همه این‌ها داخل یک پنل تاشونده نمایش داده می‌شوند.
     """
-    parts: list[str] = []
+    inner_parts: list[str] = []
 
     # نام‌ها در فروش
     if "CustomerName" in sales_df.columns and "CustomerCode" in sales_df.columns:
         sales_view = sales_df[["CustomerCode", "CustomerName"]].dropna(
-            how="all").copy()
+            how="all"
+        ).copy()
         sales_view["NormName"] = sales_view["CustomerName"].apply(
             normalize_persian_name
         )
@@ -1041,12 +1101,12 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
             ["CustomerCode", "CustomerName"]
         )
 
-        parts.append("<h2>🧪 دیباگ نام‌ها (فروش)</h2>")
-        parts.append('<div class="table-wrapper">')
-        parts.append(sales_view.to_html(index=False, border=0))
-        parts.append("</div>")
+        inner_parts.append("<h3>🧾 دیباگ نام‌ها (فروش)</h3>")
+        inner_parts.append('<div class="table-wrapper">')
+        inner_parts.append(sales_view.to_html(index=False, border=0))
+        inner_parts.append("</div>")
     else:
-        parts.append(
+        inner_parts.append(
             "<p>در جدول فروش ستون‌های CustomerName / CustomerCode پیدا نشد.</p>"
         )
 
@@ -1055,6 +1115,7 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
         cols = []
         for c in [
             "PaymentID",
+            "CheckNumber",        # ✅ شماره چک هم به جدول دیباگ پرداخت اضافه شد
             "CustomerCode",
             "CustomerName",
             "ResolvedCustomer",
@@ -1066,24 +1127,18 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
 
         if cols:
             pay_view = payments_df[cols].copy()
-            if "CustomerName" in pay_view.columns:
-                pay_view["NormName"] = pay_view["CustomerName"].apply(
-                    normalize_persian_name
-                )
-            else:
-                pay_view["NormName"] = ""
-            pay_view = pay_view.drop_duplicates().head(200)
+            pay_view = pay_view.head(200)
 
-            parts.append("<h2>🧪 دیباگ نام‌ها (پرداخت‌ها)</h2>")
-            parts.append(
+            inner_parts.append("<h3>💳 دیباگ نام‌ها (پرداخت‌ها)</h3>")
+            inner_parts.append(
                 '<p style="font-size:12px;color:#6b7280;">'
                 "ستون ResolvedCustomer/ResolvedCustomerKey نشان می‌دهد این ردیف به کدام کد مشتری وصل شده (اگر شده باشد).</p>"
             )
-            parts.append('<div class="table-wrapper">')
-            parts.append(pay_view.to_html(index=False, border=0))
-            parts.append("</div>")
+            inner_parts.append('<div class="table-wrapper">')
+            inner_parts.append(pay_view.to_html(index=False, border=0))
+            inner_parts.append("</div>")
     else:
-        parts.append("<p>هیچ پرداختی بعد از لود یافت نشد.</p>")
+        inner_parts.append("<p>هیچ پرداختی بعد از لود یافت نشد.</p>")
 
     # نگاشت name_key → کد مشتری
     name_code_map = build_name_code_mapping(sales_df)
@@ -1098,21 +1153,125 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
             )
         map_df = pd.DataFrame(map_rows)
 
-        parts.append(
-            "<h2>🧪 نگاشت نام نرمال‌شده → کد مشتری (از روی فروش‌ها)</h2>")
-        parts.append(
+        inner_parts.append("<h3>🔗 نگاشت نام نرمال‌شده → کد مشتری</h3>")
+        inner_parts.append(
             '<p style="font-size:12px;color:#6b7280;">'
-            "در این‌جا فاصله‌ها حذف شده‌اند. اگر NameKey پرداخت با این جدول برابر باشد، باید به همان CustomerCode وصل شود.</p>"
+            "این جدول نشان می‌دهد که هر نام نرمال‌شده به کدام کد مشتری در فروش‌ها وصل شده است.</p>"
         )
-        parts.append('<div class="table-wrapper">')
-        parts.append(map_df.to_html(index=False, border=0))
-        parts.append("</div>")
-    else:
-        parts.append(
-            "<p>نتوانستم از روی فروش‌ها map نام→کد بسازم (هیچ اسم یکتایی وجود ندارد یا ستون‌ها ناقص است).</p>"
-        )
+        inner_parts.append('<div class="table-wrapper">')
+        inner_parts.append(map_df.to_html(index=False, border=0))
+        inner_parts.append("</div>")
 
-    return "<hr/>" + "\n".join(parts)
+    inner_html = "\n".join(inner_parts)
+
+    # رپر تاشونده
+    html = f"""
+    <div class="debug-section">
+        <div class="debug-header">
+            <div class="debug-title">🧪 دیباگ نام‌ها</div>
+            <button type="button" class="debug-toggle-btn" data-toggle="debug" data-target="debug-names-panel">
+                نمایش / مخفی کردن
+            </button>
+        </div>
+        <div id="debug-names-panel" class="debug-panel debug-hidden">
+            {inner_html}
+        </div>
+    </div>
+    """
+    return html
+
+
+def build_debug_checks_html(checks_df: pd.DataFrame, payments_df: pd.DataFrame) -> str:
+    """
+    دیباگ چک‌ها:
+    - نشان دادن شماره چک، مبلغ، صاحب حساب و ...
+    - هایلایت کردن چک‌هایی که در پرداخت‌ها استفاده شده‌اند (با رنگ سبز)
+    """
+    if checks_df is None or checks_df.empty:
+        return ""
+
+    # ستون‌هایی که نمایش می‌دهیم
+    cols: list[str] = []
+    for c in [
+        "CheckNumber",
+        "CustomerName",
+        "Amount",
+        "DueDate",
+        "Status",
+        "CheckSerial",
+        "CheckIndex",
+    ]:
+        if c in checks_df.columns:
+            cols.append(c)
+
+    if not cols:
+        return ""
+
+    checks_view = checks_df[cols].copy().head(200)
+
+    # ست شماره چک‌هایی که در پرداخت‌ها استفاده شده‌اند
+    matched_numbers: set[str] = set()
+    if (
+        payments_df is not None
+        and not payments_df.empty
+        and "CheckNumber" in payments_df.columns
+    ):
+        ser = (
+            payments_df.loc[payments_df["SourceType"]
+                            == "Check", "CheckNumber"]
+            .dropna()
+            .astype(str)
+        )
+        ser_norm = ser.str.replace(r"\D", "", regex=True).str.lstrip("0")
+        matched_numbers = set(v for v in ser_norm.tolist() if v)
+
+    # ردیف‌های HTML
+    rows_html: list[str] = []
+
+    for _, row in checks_view.iterrows():
+        raw_val = row.get("CheckNumber", "")
+        key = re.sub(r"\D", "", str(raw_val or "")).lstrip("0")
+        is_matched = bool(key and key in matched_numbers)
+
+        row_class = ' class="matched-check-row"' if is_matched else ""
+        cell_html = []
+        for col in cols:
+            val = row.get(col, "")
+            cell_html.append(f"<td>{val if pd.notna(val) else ''}</td>")
+
+        rows_html.append(f"<tr{row_class}>" + "".join(cell_html) + "</tr>")
+
+    table_html = [
+        "<div class='table-wrapper'>",
+        "<table>",
+        "<thead><tr>",
+        *[f"<th>{c}</th>" for c in cols],
+        "</tr></thead>",
+        "<tbody>",
+        *rows_html,
+        "</tbody></table></div>",
+    ]
+
+    inner = """
+    <p style="font-size:12px;color:#6b7280;">
+    ردیف‌های سبز یعنی برای این شماره چک، پرداخت متناظر در فایل پرداخت‌ها پیدا شده است.
+    </p>
+    """ + "\n".join(table_html)
+
+    html = f"""
+    <div class="debug-section">
+        <div class="debug-header">
+            <div class="debug-title">🧪 دیباگ چک‌ها</div>
+            <button type="button" class="debug-toggle-btn" data-toggle="debug" data-target="debug-checks-panel">
+                نمایش / مخفی کردن
+            </button>
+        </div>
+        <div id="debug-checks-panel" class="debug-panel debug-hidden">
+            {inner}
+        </div>
+    </div>
+    """
+    return html
 
 
 def build_debug_checks_html(checks_df: pd.DataFrame) -> str:
@@ -1421,6 +1580,22 @@ async def upload_all(
 
 
 # ------------------ /calculate-commission ------------------ #
+DEBUG_TOGGLE_SCRIPT = """
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var buttons = document.querySelectorAll('[data-toggle="debug"]');
+    buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var targetId = btn.getAttribute('data-target');
+            var panel = document.getElementById(targetId);
+            if (!panel) return;
+            panel.classList.toggle('debug-hidden');
+        });
+    });
+});
+</script>
+"""
+
 
 @app.post("/calculate-commission", response_class=HTMLResponse)
 async def calculate_commission(request: Request):
@@ -1599,7 +1774,7 @@ async def calculate_commission(request: Request):
     salesperson_table_html = salesperson_result.to_html(index=False, border=0)
 
     debug_names_html = build_debug_names_html(sales_result, payments_result)
-    debug_checks_html = build_debug_checks_html(df_chk)
+    debug_checks_html = build_debug_checks_html(df_chk, payments_result)
 
     html = f"""
     <html>
@@ -1653,9 +1828,13 @@ async def calculate_commission(request: Request):
                 </div>
 
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
-            </div>
-        </body>
-    </html>
+        <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
+    </div>
+
+    {DEBUG_TOGGLE_SCRIPT}
+</body>
+</html>
+
     """
     return HTMLResponse(content=html)
 
