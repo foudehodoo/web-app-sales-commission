@@ -1,4 +1,5 @@
 from __future__ import annotations
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
@@ -250,6 +251,8 @@ LAST_UPLOAD = {
     "checks": None,
     "group_col": None,
     "group_config": None,
+    "sales_result": None,
+    "payments_result": None,
 }
 
 BASE_CSS = """
@@ -704,6 +707,67 @@ hr {
 .checkbox-center {
     text-align: center;
 }
+/* --------- modal نمودار مشتری --------- */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+.modal-hidden {
+    display: none;
+}
+.modal-card {
+    background: #ffffff;
+    border-radius: 18px;
+    padding: 16px 18px 18px;
+    width: 720px;
+    max-width: 95vw;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+}
+.modal-subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 2px;
+}
+.modal-close-btn {
+    background: #f3f4f6;
+    color: #374151;
+    border-radius: 999px;
+    border: 1px solid #e5e7eb;
+    padding: 4px 9px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.modal-close-btn:hover {
+    background: #e5e7eb;
+}
+.modal-body {
+    margin-top: 6px;
+}
+.modal-totals {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #374151;
+}
+.modal-totals strong {
+    font-weight: 700;
+}
+
 </style>
 """
 
@@ -1677,6 +1741,9 @@ async def calculate_commission(request: Request):
     sales_result, salesperson_result, payments_result = compute_commissions(
         df_sales, df_pay, df_chk, group_config, group_col
     )
+    # 🔹 نتایج را برای استفاده در نمودار مشتری‌ها نگه می‌داریم
+    LAST_UPLOAD["sales_result"] = sales_result
+    LAST_UPLOAD["payments_result"] = payments_result
 
     # -------- خلاصه اعداد --------
     sales_rows = len(sales_result)
@@ -1716,6 +1783,22 @@ async def calculate_commission(request: Request):
             invoices_view[col] = invoices_view[col].map(
                 lambda v: canonicalize_code(v) if pd.notna(v) else ""
             )
+
+    # 🔹 لینک‌دار کردن اسم مشتری برای نمایش نمودار
+    if "CustomerName" in invoices_view.columns and "CustomerCode" in invoices_view.columns:
+        def make_customer_link(row):
+            name = row.get("CustomerName", "")
+            code = row.get("CustomerCode", "")
+            if pd.isna(name) or str(name).strip() == "":
+                return ""
+            return (
+                f'<a href="#" class="customer-link" '
+                f'data-customer-code="{code}" '
+                f'data-customer-name="{name}">{name}</a>'
+            )
+
+        invoices_view["CustomerName"] = invoices_view.apply(
+            make_customer_link, axis=1)
 
     # بج رنگی Priority
     if "Priority" in invoices_view.columns:
@@ -1779,6 +1862,8 @@ async def calculate_commission(request: Request):
             <meta charset="utf-8" />
             <title>نتیجه محاسبه پورسانت</title>
             {BASE_CSS}
+            <!-- Chart.js برای نمودار مشتری -->
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         </head>
         <body>
             <div class="container">
@@ -1827,14 +1912,236 @@ async def calculate_commission(request: Request):
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
             </div>
 
+            <!-- مودال نمودار مشتری -->
+            <div id="customer-modal" class="modal-backdrop modal-hidden">
+                <div class="modal-card">
+                    <div class="modal-header">
+                        <div>
+                            <div class="modal-title" id="modal-customer-title"></div>
+                            <div class="modal-subtitle" id="modal-customer-subtitle"></div>
+                        </div>
+                        <button type="button" class="modal-close-btn" id="modal-close-btn">بستن</button>
+                    </div>
+                    <div class="modal-body">
+                        <div style="height:260px;">
+                            <canvas id="customer-chart"></canvas>
+                        </div>
+                        <div class="modal-totals">
+                            جمع خرید: <strong id="total-amount"></strong>
+                            &nbsp;|&nbsp;
+                            جمع تسویه: <strong id="total-paid"></strong>
+                            &nbsp;|&nbsp;
+                            مانده: <strong id="total-remaining"></strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {DEBUG_TOGGLE_SCRIPT}
+
+            <script>
+            (function() {{
+                let chartInstance = null;
+
+                function closeModal() {{
+                    const modal = document.getElementById('customer-modal');
+                    if (modal) modal.classList.add('modal-hidden');
+                }}
+
+                function openModal() {{
+                    const modal = document.getElementById('customer-modal');
+                    if (modal) modal.classList.remove('modal-hidden');
+                }}
+
+                // کلیک روی اسم مشتری
+                document.addEventListener('click', function (ev) {{
+                    const link = ev.target.closest('.customer-link');
+                    if (!link) return;
+                    ev.preventDefault();
+
+                    const code = link.getAttribute('data-customer-code') || '';
+                    const name = link.getAttribute('data-customer-name') || '';
+
+                    if (!code) {{
+                        alert('کد مشتری مشخص نیست.');
+                        return;
+                    }}
+
+                    fetch('/customer-stats?customer_code=' + encodeURIComponent(code))
+                        .then(r => r.json())
+                        .then(data => {{
+                            if (data.error) {{
+                                alert(data.error);
+                                return;
+                            }}
+
+                            document.getElementById('modal-customer-title').textContent =
+                                data.customerName || name || 'مشتری بدون نام';
+                            document.getElementById('modal-customer-subtitle').textContent =
+                                'کد مشتری: ' + (data.customerCode || code);
+
+                            document.getElementById('total-amount').textContent =
+                                (data.totals.amount || 0).toLocaleString('fa-IR');
+                            document.getElementById('total-paid').textContent =
+                                (data.totals.paid || 0).toLocaleString('fa-IR');
+                            document.getElementById('total-remaining').textContent =
+                                (data.totals.remaining || 0).toLocaleString('fa-IR');
+
+                            const points = data.points || [];
+                            const labels = points.map(p => p.date || '');
+                            const amount = points.map(p => p.amount || 0);
+                            const paid = points.map(p => p.paid || 0);
+                            const remaining = points.map(p => p.remaining || 0);
+
+                            const canvas = document.getElementById('customer-chart');
+                            if (!canvas) return;
+                            const ctx = canvas.getContext('2d');
+
+                            if (chartInstance) {{
+                                chartInstance.destroy();
+                            }}
+
+                            chartInstance = new Chart(ctx, {{
+                                type: 'line',
+                                data: {{
+                                    labels: labels,
+                                    datasets: [
+                                        {{ label: 'خرید', data: amount, tension: 0.2 }},
+                                        {{ label: 'تسویه', data: paid, tension: 0.2 }},
+                                        {{ label: 'مانده', data: remaining, tension: 0.2 }}
+                                    ]
+                                }},
+                                options: {{
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    interaction: {{ mode: 'index', intersect: false }},
+                                    scales: {{
+                                        y: {{
+                                            ticks: {{
+                                                callback: function(v) {{
+                                                    try {{ return v.toLocaleString('fa-IR'); }} catch(e) {{ return v; }}
+                                                }}
+                                            }}
+                                        }}
+                                    }}
+                                }}
+                            }});
+
+                            openModal();
+                        }})
+                        .catch(err => {{
+                            console.error(err);
+                            alert('خطا در دریافت اطلاعات مشتری.');
+                        }});
+                }});
+
+                // بستن مودال با کلیک روی دکمه یا پس‌زمینه
+                document.addEventListener('click', function (ev) {{
+                    const modal = document.getElementById('customer-modal');
+                    if (!modal || modal.classList.contains('modal-hidden')) return;
+
+                    const closeBtn = document.getElementById('modal-close-btn');
+                    if (ev.target === closeBtn || (closeBtn && closeBtn.contains(ev.target))) {{
+                        closeModal();
+                        return;
+                    }}
+                    if (ev.target === modal) {{
+                        closeModal();
+                        return;
+                    }}
+                }});
+
+                // بستن با ESC
+                document.addEventListener('keydown', function (ev) {{
+                    if (ev.key === 'Escape') {{
+                        closeModal();
+                    }}
+                }});
+            }})();
+            </script>
         </body>
     </html>
     """
     return HTMLResponse(content=html)
 
 
+@app.get("/customer-stats")
+async def customer_stats(customer_code: str):
+    """
+    برگرداندن آمار خرید/تسویه/مانده برای یک مشتری مشخص،
+    برای استفاده در نمودار.
+    """
+    sales_result = LAST_UPLOAD.get("sales_result")
+    payments_result = LAST_UPLOAD.get("payments_result")
+
+    if sales_result is None or payments_result is None:
+        return JSONResponse(
+            {"error": "ابتدا باید محاسبه پورسانت انجام شود."},
+            status_code=400,
+        )
+
+    code_key = canonicalize_code(customer_code)
+
+    # فاکتورهای مرتبط با این مشتری
+    if "CustomerKey" in sales_result.columns:
+        sales_rows = sales_result[sales_result["CustomerKey"]
+                                  == code_key].copy()
+    else:
+        sales_rows = pd.DataFrame()
+
+    # پرداخت‌های مرتبط با این مشتری
+    if "ResolvedCustomerKey" in payments_result.columns:
+        pay_rows = payments_result[payments_result["ResolvedCustomerKey"] == code_key].copy(
+        )
+    else:
+        pay_rows = pd.DataFrame()
+
+    # نقاط نمودار: بر اساس فاکتورها
+    points = []
+    if not sales_rows.empty:
+        sales_rows = sales_rows.sort_values("InvoiceDate")
+        for _, row in sales_rows.iterrows():
+            inv_date = row.get("InvoiceDate")
+            date_label = to_jalali_str(inv_date)
+
+            amount = float(row.get("Amount") or 0)
+            paid = float(row.get("PaidAmount") or 0)
+            remaining = float(row.get("Remaining") or 0)
+
+            points.append(
+                {
+                    "date": date_label,
+                    "amount": amount,
+                    "paid": paid,
+                    "remaining": remaining,
+                    "invoice_id": row.get("InvoiceID"),
+                }
+            )
+
+    total_amount = sum(p["amount"] for p in points)
+    total_paid = sum(p["paid"] for p in points)
+    total_remaining = sum(p["remaining"] for p in points)
+
+    # سعی می‌کنیم اسم مشتری را از روی اولین فاکتور پیدا کنیم
+    customer_name = ""
+    if not sales_rows.empty and "CustomerName" in sales_rows.columns:
+        customer_name = str(sales_rows.iloc[0].get("CustomerName") or "")
+
+    return JSONResponse(
+        {
+            "customerCode": code_key,
+            "customerName": customer_name,
+            "points": points,
+            "totals": {
+                "amount": total_amount,
+                "paid": total_paid,
+                "remaining": total_remaining,
+            },
+        }
+    )
+
 # ------------------ UI: تب ۲ – مدیریت پیش‌فرض گروه‌های کالا ------------------ #
+
 
 @app.get("/group-config", response_class=HTMLResponse)
 async def group_config_page():
