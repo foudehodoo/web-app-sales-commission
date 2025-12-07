@@ -875,11 +875,6 @@ def prepare_payments(
         payments_df["CustomerCode"] = None
     if "CustomerName" not in payments_df.columns:
         payments_df["CustomerName"] = None
-    # نرمال‌سازی کد طرف حساب برای جلوگیری از نمایش 13.0 و ...
-    if "CustomerCode" in payments_df.columns:
-        payments_df["CustomerCode"] = payments_df["CustomerCode"].map(
-            lambda v: canonicalize_code(v) if pd.notna(v) else None
-        )
 
     # map نام→کد
     name_code_map = build_name_code_mapping(sales_df)
@@ -905,12 +900,6 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
     - تعیین درصد پورسانت
     """
     sales_df = sales_df.copy()
-    # نرمال‌سازی کدها برای نمایش (حذف .0 و تبدیل به رشته تمیز)
-    for col in ["InvoiceID", "CustomerCode", "ProductCode"]:
-        if col in sales_df.columns:
-            sales_df[col] = sales_df[col].map(
-                lambda v: canonicalize_code(v) if pd.notna(v) else None
-            )
 
     if "InvoiceDate" not in sales_df.columns:
         raise ValueError("در فایل فروش ستونی به نام 'InvoiceDate' پیدا نشد.")
@@ -1094,17 +1083,23 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
     """
     بخش دیباگ نام‌ها:
     - نام مشتری در فروش + نام نرمال‌شده
-    - نام مشتری در پرداخت + نام نرمال‌شده + کد شناسایی شده
+    - نام مشتری در پرداخت + کدهای تشخیص داده‌شده
     - نگاشت name_key → کد مشتری
     همه این‌ها داخل یک پنل تاشونده نمایش داده می‌شوند.
     """
     inner_parts: list[str] = []
 
-    # نام‌ها در فروش
+    # ---- نام‌ها در فروش ----
     if "CustomerName" in sales_df.columns and "CustomerCode" in sales_df.columns:
         sales_view = sales_df[["CustomerCode", "CustomerName"]].dropna(
             how="all"
         ).copy()
+
+        # تمیز کردن کد مشتری فقط برای نمایش (حذف .0 و ...)
+        sales_view["CustomerCode"] = sales_view["CustomerCode"].map(
+            lambda v: canonicalize_code(v) if pd.notna(v) else ""
+        )
+
         sales_view["NormName"] = sales_view["CustomerName"].apply(
             normalize_persian_name
         )
@@ -1121,12 +1116,12 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
             "<p>در جدول فروش ستون‌های CustomerName / CustomerCode پیدا نشد.</p>"
         )
 
-    # نام‌ها در پرداخت‌ها
+    # ---- نام‌ها در پرداخت‌ها ----
     if not payments_df.empty:
         cols = []
         for c in [
             "PaymentID",
-            "CheckNumber",        # ✅ شماره چک هم به جدول دیباگ پرداخت اضافه شد
+            "CheckNumber",
             "CustomerCode",
             "CustomerName",
             "ResolvedCustomer",
@@ -1140,6 +1135,12 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
             pay_view = payments_df[cols].copy()
             pay_view = pay_view.head(200)
 
+            # تمیز کردن کد مشتری فقط برای نمایش
+            if "CustomerCode" in pay_view.columns:
+                pay_view["CustomerCode"] = pay_view["CustomerCode"].map(
+                    lambda v: canonicalize_code(v) if pd.notna(v) else ""
+                )
+
             inner_parts.append("<h3>💳 دیباگ نام‌ها (پرداخت‌ها)</h3>")
             inner_parts.append(
                 '<p style="font-size:12px;color:#6b7280;">'
@@ -1151,7 +1152,7 @@ def build_debug_names_html(sales_df: pd.DataFrame, payments_df: pd.DataFrame) ->
     else:
         inner_parts.append("<p>هیچ پرداختی بعد از لود یافت نشد.</p>")
 
-    # نگاشت name_key → کد مشتری
+    # ---- نگاشت name_key → کد مشتری ----
     name_code_map = build_name_code_mapping(sales_df)
     if name_code_map:
         map_rows = []
@@ -1394,7 +1395,13 @@ async def upload_all(
     # ساخت ردیف‌های جدول مرحله ۲
     rows_html = ""
     for g in groups:
-        g_str = str(g)
+        # 🔑 مقدار اصلیِ کلید (برای منطق محاسبه) – همون چیزی که توی دیتافریم هست
+        key_str = str(g)
+
+        # 🎨 مقدار «خوشگل‌شده» فقط برای نمایش (حذف .0 و ...)
+        pretty_str = canonicalize_code(g)
+        if pretty_str is None:
+            pretty_str = ""
 
         # پیدا کردن نام خوانا برای این گروه
         display_name = ""
@@ -1404,9 +1411,10 @@ async def upload_all(
                 display_name = str(sample_rows.iloc[0][group_name_col])
 
         if display_name:
-            display_text = f"{g_str} – {display_name}"
+            display_text = f"{pretty_str} – {display_name}"
         else:
-            display_text = g_str
+            # اگر canonical نشد، خود key_str را نشان بده
+            display_text = pretty_str or key_str
 
         # انتخاب گروه پیش‌فرض (category) از روی مپ کالا→گروه (اگر group_col == ProductCode)
         category_for_code = None
@@ -1422,10 +1430,10 @@ async def upload_all(
         if category_for_code and category_for_code in default_group_cfg:
             selected_category = category_for_code
             pre_cfg = default_group_cfg[category_for_code]
-        # ۲) اگر خود g_str نام یکی از گروه‌های پیش‌فرض بود
-        elif g_str in default_group_cfg:
-            selected_category = g_str
-            pre_cfg = default_group_cfg[g_str]
+        # ۲) اگر خود کلید (همون مقدار اصلی ستون) نام یکی از گروه‌های پیش‌فرض بود
+        elif key_str in default_group_cfg:
+            selected_category = key_str
+            pre_cfg = default_group_cfg[key_str]
 
         # مقدار ورودی‌ها
         if pre_cfg:
@@ -1462,7 +1470,8 @@ async def upload_all(
             <tr>
                 <td>{display_text}</td>
                 <td>
-                    <input type="hidden" name="group_name" value="{g_str}" />
+                    <!-- ⚠️ این مقدار hidden همان key_str است تا منطق group_config و prepare_sales به‌هم نخورد -->
+                    <input type="hidden" name="group_name" value="{key_str}" />
                     <select name="group_category" onchange="onCategoryChange(this)">
                         {options_html}
                     </select>
@@ -1476,7 +1485,7 @@ async def upload_all(
                            placeholder="مثلاً 7، 30، 90" {due_days_value_attr} />
                 </td>
                 <td class="checkbox-center">
-                    <input type="checkbox" name="cash_group" value="{g_str}" {checked_attr} />
+                    <input type="checkbox" name="cash_group" value="{key_str}" {checked_attr} />
                 </td>
             </tr>
         """
@@ -1669,7 +1678,7 @@ async def calculate_commission(request: Request):
         df_sales, df_pay, df_chk, group_config, group_col
     )
 
-    # خلاصه
+    # -------- خلاصه اعداد --------
     sales_rows = len(sales_result)
     sales_sum = sales_result["Amount"].sum(
     ) if "Amount" in sales_result.columns else 0
@@ -1687,18 +1696,26 @@ async def calculate_commission(request: Request):
         total_commission = float(
             salesperson_result["TotalCommission"].sum() or 0)
 
+    # -------- آماده‌سازی جدول فاکتورها برای نمایش --------
     invoices_view = sales_result.copy()
 
-    # تاریخ‌ها به شمسی برای نمایش
+    # تاریخ‌ها به شمسی
     for dt_col in ["InvoiceDate", "DueDate"]:
         if dt_col in invoices_view.columns:
             invoices_view[dt_col] = invoices_view[dt_col].map(to_jalali_str)
 
-    # درصد به صورت انسانی
+    # درصد به صورت انسانی (عدد درصد)
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = (
             invoices_view["CommissionPercent"] * 100
         ).round(2)
+
+    # نرمال‌سازی کدها فقط برای نمایش (حذف .0 و تبدیل به رشته تمیز)
+    for col in ["InvoiceID", "CustomerCode", group_col]:
+        if col in invoices_view.columns:
+            invoices_view[col] = invoices_view[col].map(
+                lambda v: canonicalize_code(v) if pd.notna(v) else ""
+            )
 
     # بج رنگی Priority
     if "Priority" in invoices_view.columns:
@@ -1710,11 +1727,13 @@ async def calculate_commission(request: Request):
             return ""
         invoices_view["Priority"] = invoices_view["Priority"].map(pri_badge)
 
+    # تبدیل درصد به رشته با علامت ٪
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = invoices_view["CommissionPercent"].map(
             lambda x: f"{x:.2f}٪"
         )
 
+    # گرد کردن مبالغ
     for col in ["Amount", "PaidAmount", "Remaining", "CommissionAmount"]:
         if col in invoices_view.columns:
             invoices_view[col] = invoices_view[col].round(0).astype("int64")
@@ -1743,12 +1762,14 @@ async def calculate_commission(request: Request):
             index=False, border=0, escape=False
         )
 
+    # جدول پورسانت به تفکیک فروشنده
     if "TotalCommission" in salesperson_result.columns:
         salesperson_result["TotalCommission"] = (
             salesperson_result["TotalCommission"].round(0).astype("int64")
         )
     salesperson_table_html = salesperson_result.to_html(index=False, border=0)
 
+    # دیباگ
     debug_names_html = build_debug_names_html(sales_result, payments_result)
     debug_checks_html = build_debug_checks_html(df_chk, payments_result)
 
@@ -1804,13 +1825,11 @@ async def calculate_commission(request: Request):
                 </div>
 
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
-        <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
-    </div>
+            </div>
 
-    {DEBUG_TOGGLE_SCRIPT}
-</body>
-</html>
-
+            {DEBUG_TOGGLE_SCRIPT}
+        </body>
+    </html>
     """
     return HTMLResponse(content=html)
 
