@@ -10,7 +10,6 @@ from app.services.checks_excel_loader import load_checks_excel
 from datetime import datetime
 import jdatetime
 from fastapi import FastAPI, UploadFile, File, Request
-from fastapi.responses import HTMLResponse
 import pandas as pd
 import re
 import os
@@ -260,17 +259,28 @@ BASE_CSS = """
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
     direction: rtl;
-    background: radial-gradient(circle at top left, #eff6ff 0, #f9fafb 45%, #f3f4f6 100%);
     margin: 0;
+    min-height: 100vh;
+
+    /* گرادیانت چندلایه  */
+    background:
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.35) 0, transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.28) 0, transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.25) 0, transparent 55%),
+        linear-gradient(135deg, #eef2ff, #f9fafb 40%, #fdf2ff 100%);
 }
+
 .container {
     max-width: 1150px;
     margin: 32px auto;
-    background: #ffffff;
+    background: rgba(255, 255, 255, 0.92);   /* نیمه‌شفاف برای افکت شیشه‌ای */
     padding: 24px 32px 32px;
-    border-radius: 20px;
-    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+    border-radius: 24px;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    backdrop-filter: blur(18px);             /* اگر مرورگر پشتیبانی کند 🤌 */
 }
+
 h1 {
     margin-top: 0;
     color: #111827;
@@ -374,15 +384,15 @@ small {
 }
 .summary-card {
     position: relative;
-    background: #f9fafb;
-    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.92);
+    border-radius: 18px;
     padding: 12px 14px 10px 14px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid rgba(226, 232, 240, 0.95);
     overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 .summary-card::before {
     content: "";
@@ -402,9 +412,10 @@ small {
     background: linear-gradient(180deg, #d97706, #fbbf24);
 }
 .summary-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 16px 35px rgba(15, 23, 42, 0.16);
-    border-color: #d1d5db;
+    transform: translateY(-4px);
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
+    border-color: rgba(148, 163, 184, 0.7);
+    background: rgba(255, 255, 255, 0.98);
 }
 .summary-card-header {
     display: flex;
@@ -766,6 +777,61 @@ hr {
 }
 .modal-totals strong {
     font-weight: 700;
+}
+/* -------- صفحه اصلی (آپلود فایل‌ها) -------- */
+
+.hero-intro {
+    margin-top: 4px;
+    margin-bottom: 18px;
+}
+
+.hero-intro h1 {
+    margin-bottom: 6px;
+}
+
+.hero-intro p {
+    font-size: 13px;
+    color: #4b5563;
+}
+
+.upload-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: flex-start;
+    margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+    .upload-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.upload-card {
+    background: rgba(249, 250, 252, 0.94);
+    border-radius: 18px;
+    padding: 16px 16px 14px;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
+}
+
+.upload-card-light {
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 10px 28px rgba(148, 163, 184, 0.20);
+}
+
+.upload-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 6px;
+}
+
+.upload-card-subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 10px;
 }
 
 </style>
@@ -1303,7 +1369,6 @@ def build_debug_checks_html(checks_df, payments_df=None):
         matched_numbers = set(v for v in ser_norm.tolist() if v)
 
     # ردیف‌های HTML
-    import re  # برای اطمینان اگر بالا ایمپورت نکرده باشی
     rows_html = []
 
     for _, row in checks_view.iterrows():
@@ -1315,8 +1380,6 @@ def build_debug_checks_html(checks_df, payments_df=None):
         cell_html = []
         for col in cols:
             val = row.get(col, "")
-            # استفاده از pd.notna (اگر بالا ایمپورت داری، این هم مشکلی نداره)
-            import pandas as pd
             cell_html.append(f"<td>{val if pd.notna(val) else ''}</td>")
 
         rows_html.append(f"<tr{row_class}>" + "".join(cell_html) + "</tr>")
@@ -1359,12 +1422,15 @@ def build_debug_checks_html(checks_df, payments_df=None):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    nav_html = build_nav("main")
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "title": "محاسبه پورسانت فروش",
-            "active_tab": "main",
+            "nav_html": nav_html,
+            "base_css": BASE_CSS,
+            # active_tab الان استفاده نمی‌شود؛ می‌تونی حذفش کنی
         },
     )
 
