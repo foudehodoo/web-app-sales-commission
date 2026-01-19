@@ -21,8 +21,11 @@
             </li>
             <li>
                 <strong>قانون بازگشت (Re-activation):</strong>
-                اگر مشتری بیش از <strong>90 روز</strong> (قابل تنظیم) خرید نکرده باشد، دوباره «جدید» محسوب شده و پورسانت
-                طلایی می‌گیرد.
+                اگر مشتری بیش از
+                <!-- ورودی تنظیم روزهای بازگشت -->
+                <input type="number" name="reactivation_days" value="90" min="1" max="365"
+                    style="width: 60px; padding: 2px 6px; border: 1px solid #a78bfa; border-radius: 4px; text-align: center; font-weight: bold; color: #7c3aed;">
+                روز خرید نکرده باشد، دوباره «جدید» محسوب شده و پورسانت طلایی می‌گیرد.
             </li>
             <li>
                 <strong>آماده‌سازی CRM:</strong>
@@ -74,12 +77,12 @@
                 </h3>
                 <p style="margin-bottom:12px;">
                     برای اینکه سیستم بتواند مشتریان قدیمی که دوباره فعال شده‌اند را تشخیص دهد، فایل فروش سال گذشته
-                    (مثلاً 1403) را
+                    را
                     اینجا آپلود کنید.
                 </p>
 
                 <div class="form-row">
-                    <label for="history_file">انتخاب فایل سوابق (Excel):</label>
+                    <label for="history_file">انتخاب فایل سوابق:</label>
                     <input type="file" id="history_file" name="history_file" accept=".xlsx, .xls"
                         style="border: 2px dashed #a78bfa; background: #fdfcff;">
                     <small style="display:block; margin-top:6px; color:#7c3aed;">* این فایل اختیاری است، اما برای محاسبه

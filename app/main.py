@@ -20,7 +20,8 @@ import json
 
 DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
-
+# در بالای فایل، جایی که تنظیمات دیگر هستند
+REACTIVATION_DAYS = 90  # این عدد قابل تغییر است
 
 # ---------------------------------------------------------
 #  گام ۱: افزودن ماژول‌های منطق زمانی و CRM
@@ -357,9 +358,9 @@ body {
 
     /* گرادیانت چندلایه  */
     background:
-        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.35) 0, transparent 55%),
-        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.28) 0, transparent 55%),
-        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.25) 0, transparent 55%),
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.55) 0, transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.35) 0, transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.35) 0, transparent 55%),
         linear-gradient(135deg, #eef2ff, #f9fafb 40%, #fdf2ff 100%);
 }
 
