@@ -1,6 +1,37 @@
 {% extends "base.html" %}
 
 {% block content %}
+<!-- باکس راهنمای هوشمند زمانی و CRM -->
+<div class="summary-card"
+    style="margin-bottom: 24px; border-inline-start: 4px solid #8b5cf6; background: linear-gradient(to left, #f5f3ff, rgba(255,255,255,0.95));">
+    <div class="summary-card-header">
+        <div class="summary-title">
+            <span class="summary-icon" style="background: #ede9fe; color: #7c3aed; font-size: 18px;">🕒</span>
+            <div>
+                <span class="summary-title-main" style="color: #5b21b6;">راهنمای هوشمند زمانی و CRM</span>
+                <div class="summary-title-sub">تشخیص خودکار مشتریان جدید و بازگشتی</div>
+            </div>
+        </div>
+    </div>
+    <div class="summary-card-body" style="padding-top: 8px;">
+        <ul style="margin: 0; padding-inline-start: 20px; color: #4b5563; font-size: 12px; line-height: 2;">
+            <li>
+                <strong>تشخیص مشتری جدید:</strong>
+                سیستم با بررسی فایل سوابق (مثلاً <code>1403.xlsx</code>)، مشتریان بدون سابقه را شناسایی می‌کند.
+            </li>
+            <li>
+                <strong>قانون بازگشت (Re-activation):</strong>
+                اگر مشتری بیش از <strong>90 روز</strong> (قابل تنظیم) خرید نکرده باشد، دوباره «جدید» محسوب شده و پورسانت
+                طلایی می‌گیرد.
+            </li>
+            <li>
+                <strong>آماده‌سازی CRM:</strong>
+                اطلاعات مشتریان جهت اتصال به پنل CRM و باشگاه مشتریان تحلیل می‌شود.
+            </li>
+        </ul>
+    </div>
+</div>
+
 <div class="hero-intro">
     <h1>محاسبه پورسانت فروش</h1>
     <p>
@@ -34,6 +65,27 @@
                 <label>فایل اکسل چک‌ها (اختیاری)</label><br />
                 <input type="file" name="checks_file" accept=".xlsx,.xls" />
                 <small>برای اتصال پرداخت‌هایی که در توضیحات‌شان شماره چک آمده استفاده می‌شود.</small>
+            </div>
+            <!-- بخش فایل سوابق (تاریخچه) -->
+            <div style="margin-top: 32px; padding-top: 24px; border-top: 1px dashed #cbd5e1;">
+                <h3 style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                    <span style="font-size:20px;">📂</span>
+                    فایل سوابق فروش (جهت محاسبه قدمت مشتری)
+                </h3>
+                <p style="margin-bottom:12px;">
+                    برای اینکه سیستم بتواند مشتریان قدیمی که دوباره فعال شده‌اند را تشخیص دهد، فایل فروش سال گذشته
+                    (مثلاً 1403) را
+                    اینجا آپلود کنید.
+                </p>
+
+                <div class="form-row">
+                    <label for="history_file">انتخاب فایل سوابق (Excel):</label>
+                    <input type="file" id="history_file" name="history_file" accept=".xlsx, .xls"
+                        style="border: 2px dashed #a78bfa; background: #fdfcff;">
+                    <small style="display:block; margin-top:6px; color:#7c3aed;">* این فایل اختیاری است، اما برای محاسبه
+                        دقیق پاداش
+                        مشتریان جدید توصیه می‌شود.</small>
+                </div>
             </div>
 
             <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>

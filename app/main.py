@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import timedelta
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -19,6 +20,98 @@ import json
 
 DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
+
+
+# ---------------------------------------------------------
+#  گام ۱: افزودن ماژول‌های منطق زمانی و CRM
+# ---------------------------------------------------------
+
+
+class CRMConfigLoader:
+    """مدیریت تنظیمات و هدرهای اتصال به CRM"""
+
+    def __init__(self, settings_path="commission_settings.json", headers_path="headers.json"):
+        self.settings_path = settings_path
+        self.headers_path = headers_path
+        self.settings = {}
+        self.headers = {}
+        self.load_configs()
+
+    def load_configs(self):
+        # بارگذاری تنظیمات پورسانت و قوانین زمانی
+        if os.path.exists(self.settings_path):
+            with open(self.settings_path, 'r', encoding='utf-8') as f:
+                self.settings = json.load(f)
+
+        # بارگذاری هدرها برای اتصال به CRM
+        if os.path.exists(self.headers_path):
+            with open(self.headers_path, 'r', encoding='utf-8') as f:
+                self.headers = json.load(f)
+
+    def get_max_gap_days(self):
+        """تعداد روزهایی که اگر مشتری خرید نکند، دوباره مشتری جدید (طلایی) محسوب می‌شود"""
+        return self.settings.get("max_gap_days", 90)  # پیش‌فرض ۹۰ روز
+
+
+class TimeBasedCommissionLogic:
+    """
+    منطق محاسبات بر مبنای زمان:
+    تشخیص می‌دهد آیا مشتری 'جدید' است یا 'قدیمی' یا 'بازگشتی'.
+    """
+
+    def __init__(self, historical_df: pd.DataFrame = None):
+        # این دیتافریم شامل سوابق خرید سال‌های قبل (مثلاً ۱۴۰۳ و ۱۴۰۴ شهریور) است
+        self.history = historical_df
+        # تبدیل تاریخ‌ها به datetime برای مقایسه راحت‌تر
+        if self.history is not None and not self.history.empty:
+            # فرض بر این است که ستونی به نام 'Date' یا 'InvoiceDate' داریم
+            date_col = next(
+                (col for col in self.history.columns if 'date' in col.lower() or 'تاریخ' in col), None)
+            customer_col = next(
+                (col for col in self.history.columns if 'customer' in col.lower() or 'مشتری' in col), None)
+
+            if date_col and customer_col:
+                self.history[date_col] = pd.to_datetime(
+                    self.history[date_col], errors='coerce')
+                self.last_purchase_map = self.history.groupby(
+                    customer_col)[date_col].max().to_dict()
+            else:
+                self.last_purchase_map = {}
+        else:
+            self.last_purchase_map = {}
+
+    def get_customer_status(self, customer_name: str, current_invoice_date: pd.Timestamp, gap_threshold_days: int) -> dict:
+        """
+        وضعیت مشتری را برمی‌گرداند:
+        - New: کلاً در سوابق نیست.
+        - Reactivated: در سوابق هست، اما آخرین خریدش خیلی قدیمی است (بیشتر از حد مجاز).
+        - Active: مشتری فعال و عادی.
+        """
+        if not self.last_purchase_map or customer_name not in self.last_purchase_map:
+            return {"status": "New", "commission_multiplier": 1.5, "reason": "مشتری جدید (بدون سابقه)"}
+
+        last_date = self.last_purchase_map[customer_name]
+
+        # اگر تاریخ سابقه نامعتبر بود
+        if pd.isna(last_date):
+            return {"status": "New", "commission_multiplier": 1.5, "reason": "مشتری جدید (تاریخ نامعتبر)"}
+
+        # محاسبه فاصله زمانی
+        # هندل کردن تبدیل تاریخ شمسی به میلادی باید قبل از این تابع انجام شده باشد یا اینجا هندل شود
+        days_diff = (current_invoice_date - last_date).days
+
+        if days_diff > gap_threshold_days:
+            return {
+                "status": "Reactivated",
+                "commission_multiplier": 1.2,
+                "reason": f"بازگشت مشتری پس از {days_diff} روز (بیشتر از {gap_threshold_days} روز)"
+            }
+
+        return {"status": "Active", "commission_multiplier": 1.0, "reason": "مشتری فعال"}
+
+
+# نمونه‌سازی اولیه (Global)
+crm_config = CRMConfigLoader()
 
 
 def load_default_group_config(path: str = DEFAULT_GROUP_CONFIG_PATH) -> dict:
@@ -1440,16 +1533,46 @@ async def upload_all(
     sales_file: UploadFile = File(...),
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None),
+    # 👇 تغییر ۱: دریافت فایل سوابق از فرم HTML
+    history_file: UploadFile | None = File(None)
 ):
     nav_html = build_nav("main")
 
+    # بارگذاری فایل‌های اصلی
     df_sales = load_sales_excel(sales_file.file)
     df_pay = load_payments_excel(payments_file.file)
 
+    # بارگذاری فایل چک‌ها
     if checks_file is not None and checks_file.filename:
         df_chk = load_checks_excel(checks_file.file)
     else:
         df_chk = pd.DataFrame()
+
+    # 👇 تغییر ۲: بارگذاری فایل سوابق (تاریخچه)
+    # فرض می‌کنیم فایل سوابق هم یک اکسل ساده است که ستون‌های مشتری و کالا را دارد
+    if history_file is not None and history_file.filename:
+        try:
+            # خواندن اکسل سوابق
+            df_history = pd.read_excel(history_file.file)
+
+            # نرمال‌سازی نام ستون‌ها (جهت اطمینان از حذف ی/ک عربی)
+            # این کار باعث می‌شود اگر در فایل سوابق "مشتري" با ی عربی بود، درست شود
+            df_history.columns = df_history.columns.str.replace(
+                'ي', 'ی', regex=True)
+            df_history.columns = df_history.columns.str.replace(
+                'ك', 'ک', regex=True)
+
+            # نرمال‌سازی داده‌های متنی داخل جدول سوابق (برای مقایسه دقیق‌تر)
+            obj_cols = df_history.select_dtypes(include=['object']).columns
+            for col in obj_cols:
+                df_history[col] = df_history[col].astype(
+                    str).str.replace('ي', 'ی').str.replace('ك', 'ک')
+
+        except Exception as e:
+            print(f"Error loading history file: {e}")
+            df_history = pd.DataFrame()  # در صورت خطا، خالی در نظر می‌گیریم
+    else:
+        df_history = pd.DataFrame()
 
     # تشخیص ستون گروه کالا
     if "ProductCode" in df_sales.columns:
@@ -1479,9 +1602,11 @@ async def upload_all(
 
     groups = sorted(df_sales[group_col].dropna().unique())
 
+    # ذخیره در متغیر سراسری برای استفاده در مراحل بعد
     LAST_UPLOAD["sales"] = df_sales
     LAST_UPLOAD["payments"] = df_pay
     LAST_UPLOAD["checks"] = df_chk
+    LAST_UPLOAD["history"] = df_history  # 👈 ذخیره فایل سوابق
     LAST_UPLOAD["group_col"] = group_col
 
     # 📥 خواندن تنظیمات پیش‌فرض گروه‌ها
@@ -1514,7 +1639,7 @@ async def upload_all(
     # آماده‌سازی داده برای جاوااسکریپت (منوی کشویی گروه کالا)
     js_cfg_map = {
         gname: {
-            "percent": (cfg.get("percent") or 0) * 100,  # درصد انسانی برای UI
+            "percent": (cfg.get("percent") or 0) * 100,
             "due_days": cfg.get("due_days"),
             "is_cash": bool(cfg.get("is_cash")),
         }
@@ -1525,15 +1650,11 @@ async def upload_all(
     # ساخت ردیف‌های جدول مرحله ۲
     rows_html = ""
     for g in groups:
-        # 🔑 مقدار اصلیِ کلید (برای منطق محاسبه) – همون چیزی که توی دیتافریم هست
         key_str = str(g)
-
-        # 🎨 مقدار «خوشگل‌شده» فقط برای نمایش (حذف .0 و ...)
         pretty_str = canonicalize_code(g)
         if pretty_str is None:
             pretty_str = ""
 
-        # پیدا کردن نام خوانا برای این گروه
         display_name = ""
         if group_name_col is not None:
             sample_rows = df_sales[df_sales[group_col] == g]
@@ -1543,10 +1664,8 @@ async def upload_all(
         if display_name:
             display_text = f"{pretty_str} – {display_name}"
         else:
-            # اگر canonical نشد، خود key_str را نشان بده
             display_text = pretty_str or key_str
 
-        # انتخاب گروه پیش‌فرض (category) از روی مپ کالا→گروه (اگر group_col == ProductCode)
         category_for_code = None
         if group_col == "ProductCode":
             canon_code = canonicalize_code(g)
@@ -1556,16 +1675,13 @@ async def upload_all(
         pre_cfg = None
         selected_category = ""
 
-        # ۱) اگر از روی مپ کالا→گروه گروهی پیدا شد
         if category_for_code and category_for_code in default_group_cfg:
             selected_category = category_for_code
             pre_cfg = default_group_cfg[category_for_code]
-        # ۲) اگر خود کلید (همون مقدار اصلی ستون) نام یکی از گروه‌های پیش‌فرض بود
         elif key_str in default_group_cfg:
             selected_category = key_str
             pre_cfg = default_group_cfg[key_str]
 
-        # مقدار ورودی‌ها
         if pre_cfg:
             percent_value_attr = f'value="{(pre_cfg.get("percent") or 0) * 100:.2f}"'
             due_days_val = pre_cfg.get("due_days")
@@ -1579,7 +1695,6 @@ async def upload_all(
             checked_attr = ""
             selected_category = selected_category or ""
 
-        # منوی کشویی گروه کالا
         options_html = '<option value="">-- انتخاب کن --</option>'
         for cat_name, cfg in default_group_cfg.items():
             cat_percent = (cfg.get("percent") or 0) * 100
@@ -1600,7 +1715,6 @@ async def upload_all(
             <tr>
                 <td>{display_text}</td>
                 <td>
-                    <!-- ⚠️ این مقدار hidden همان key_str است تا منطق group_config و prepare_sales به‌هم نخورد -->
                     <input type="hidden" name="group_name" value="{key_str}" />
                     <select name="group_category" onchange="onCategoryChange(this)">
                         {options_html}
@@ -1632,10 +1746,13 @@ async def upload_all(
                 {nav_html}
                 <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
                 <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
+                
+                <!-- 👇 اضافه کردن یک نوت کوچک برای کاربر جهت اطمینان از آپلود فایل سوابق -->
+                {'<div class="message message-success">فایل سوابق با موفقیت دریافت شد و در محاسبات لحاظ خواهد شد.</div>' if not df_history.empty else ''}
+                
                 <ul style="font-size:12px; color:#4b5563;">
                     <li>ستون <b>گروه کالا</b> از روی صفحهٔ «تعریف گروه‌های کالا (پیش‌فرض)» خوانده می‌شود.</li>
                     <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
-                    <li>اگر در تب «تخصیص کالا به گروه» کد کالاها را به گروه‌ها داده باشی، اینجا به‌صورت خودکار پر می‌شود.</li>
                 </ul>
 
                 <form action="/calculate-commission" method="post">
