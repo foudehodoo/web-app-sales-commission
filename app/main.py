@@ -7,7 +7,14 @@ from pathlib import Path
 from app.services.sales_excel_loader import load_sales_excel
 from app.services.payments_excel_loader import load_payments_excel
 from app.services.checks_excel_loader import load_checks_excel
-
+from app.services.customer_balances import (
+    load_balances_from_excel,
+    save_balances_to_db,
+    load_balances_from_db,
+    update_balances,
+    normalize_name as normalize_balance_name
+)
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from datetime import datetime
 import jdatetime
 from fastapi import FastAPI, UploadFile, File, Request
@@ -941,8 +948,9 @@ def build_nav(active: str) -> str:
     return f'''
     <div class="navbar">
         <a href="/" class="{cls("main")}">محاسبه پورسانت</a>
-        <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا (پیش‌فرض)</a>
+        <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا</a>
         <a href="/group-items" class="{cls("items")}">تخصیص کالا به گروه</a>
+        <a href="/customer-balances" class="{cls("balances")}">مدیریت مانده مشتریان</a> <!-- لینک جدید -->
     </div>
     '''
 
@@ -1549,6 +1557,264 @@ async def index(request: Request):
         },
     )
 
+# ------------------ UI: تب ۴ – مدیریت مانده مشتریان ------------------
+
+
+@app.get("/customer-balances", response_class=HTMLResponse)
+async def customer_balances_page(request: Request):
+    nav_html = build_nav("balances")
+    current_data = load_balances_from_db()
+
+    rows_html = ""
+    if current_data:
+        for item in current_data:
+            code = item.get("CustomerCode", "")
+            name = item.get("OriginalName", item.get("CustomerName", ""))
+            balance = item.get("Balance", 0)
+
+            # فرمت کردن مبلغ
+            balance_str = f"{balance:,.0f}"
+            color = "red" if balance < 0 else "green"
+
+            rows_html += f"""
+            <tr>
+                <td>{int(float(code)) if code and str(code) != 'nan' else ''}</td>
+                <td>{name}</td>
+                <td style="direction: ltr; text-align: right; color: {color}; font-weight: bold;">{balance_str}</td>
+                <td>
+                    <button type="button" class="pill-button" onclick="editBalance('{name}', '{code}', {balance})">ویرایش</button>
+                    <button type="button" class="pill-button" style="color:red;" onclick="deleteBalance('{name}')">حذف</button>
+                </td>
+            </tr>
+            """
+    else:
+        rows_html = "<tr><td colspan='4' style='text-align:center'>هنوز مانده‌ای ثبت نشده است.</td></tr>"
+
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>مدیریت مانده حساب مشتریان</title>
+            {BASE_CSS}
+            <script>
+                function deleteBalance(name) {{
+                    if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
+                        fetch('/delete-balance', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+                            body: 'customer_name=' + encodeURIComponent(name)
+                        }}).then(() => location.reload());
+                    }}
+                }}
+                
+                function editBalance(name, code, balance) {{
+                    const newCode = prompt("کد مشتری:", code);
+                    if (newCode === null) return; // کنسل شد
+                    
+                    const newName = prompt("نام مشتری:", name);
+                    if (newName === null) return;
+                    
+                    const newBalance = prompt("مانده جدید (عدد وارد کنید):", balance);
+                    if (newBalance === null) return;
+                    
+                    // ارسال به سرور برای ویرایش
+                    const formData = new FormData();
+                    formData.append('old_name', name);
+                    formData.append('code', newCode);
+                    formData.append('name', newName);
+                    formData.append('balance', newBalance);
+                    
+                    fetch('/edit-balance', {{
+                        method: 'POST',
+                        body: formData
+                    }}).then(() => location.reload());
+                }}
+
+                function addNewRow() {{
+                    const code = prompt("کد مشتری جدید:");
+                    if (!code) return;
+                    const name = prompt("نام مشتری جدید:");
+                    if (!name) return;
+                    const balance = prompt("مانده حساب:");
+                    if (balance === null || balance === "") return;
+
+                    const formData = new FormData();
+                    formData.append('code', code);
+                    formData.append('name', name);
+                    formData.append('balance', balance);
+                    
+                    fetch('/add-balance', {{
+                        method: 'POST',
+                        body: formData
+                    }}).then(() => location.reload());
+                }}
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                {nav_html}
+                <h1>مدیریت مانده حساب مشتریان</h1>
+                
+                <div class="upload-card" style="margin-bottom: 24px;">
+                    <div class="upload-card-title">بارگذاری فایل اکسل مانده‌ها</div>
+                    <form action="/upload-balances" method="post" enctype="multipart/form-data">
+                        <div class="form-row">
+                            <label>فایل اکسل گزارش حسابداری (شامل هدرهای دو ردیفی)</label><br />
+                            <input type="file" name="balances_file" accept=".xlsx,.xls" required />
+                        </div>
+                        <button type="submit">بارگذاری و بروزرسانی مانده‌ها</button>
+                    </form>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن ردیف دستی</button>
+                    <button type="button" class="pill-button" style="background-color: #fee2e2; color: #b91c1c;" onclick="clearAllBalances()">🗑️ حذف تمام مانده‌ها</button>
+                </div>
+
+                <h2>مانده‌های فعلی در حافظه سیستم</h2>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>کد مشتری</th>
+                                <th>نام مشتری</th>
+                                <th>مانده حساب</th>
+                                <th>عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                </div>
+                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
+            </div>
+            <script>
+                function clearAllBalances() {{
+                    if(confirm("هشدار: آیا از حذف تمامی مانده‌های ذخیره شده اطمینان دارید؟ این عملیات غیرقابل بازگشت است.")) {{
+                        fetch('/clear-balances', {{ method: 'POST' }})
+                        .then(() => location.reload());
+                    }}
+                }}
+            </script>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/upload-balances", response_class=HTMLResponse)
+async def upload_balances(request: Request):
+    form = await request.form()
+    file = form.get("balances_file")
+    if not file or not file.filename:
+        return HTMLResponse(content="<h1>خطا: فایلی انتخاب نشده است.</h1><a href='/customer-balances'>بازگشت</a>")
+
+    # استفاده از سرویس برای خواندن فایل
+    new_items = load_balances_from_excel(file.file)
+
+    if not new_items:
+        return HTMLResponse(content="<h1>خطا: نتوانستیم داده‌ای از فایل استخراج کنیم. ساختار فایل را بررسی کنید.</h1><a href='/customer-balances'>بازگشت</a>")
+
+    # به‌روزرسانی دیتابیس
+    update_balances(new_items)
+
+    # ریدایرکت به صفحه نمایش
+    return RedirectResponse(url="/customer-balances", status_code=303)
+
+
+@app.post("/edit-balance")
+async def edit_balance(request: Request):
+    form = await request.form()
+    old_name = form.get("old_name")  # نام نرمال شده برای پیدا کردن ردیف قدیمی
+    new_code = form.get("code")
+    new_name = form.get("name")
+    new_balance_str = form.get("balance")
+
+    current_data = load_balances_from_db()
+
+    # پیدا کردن و آپدیت آیتم
+    updated_data = []
+    found = False
+    for item in current_data:
+        if item.get("CustomerName") == old_name:
+            found = True
+            # نرمال‌سازی نام جدید
+            norm_name = normalize_balance_name(new_name)
+            try:
+                bal = float(new_balance_str)
+            except ValueError:
+                bal = 0
+
+            updated_data.append({
+                "CustomerCode": str(new_code).strip(),
+                "CustomerName": norm_name,
+                "OriginalName": str(new_name).strip(),
+                "Balance": bal
+            })
+        else:
+            updated_data.append(item)
+
+    if found:
+        save_balances_to_db(updated_data)
+
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/add-balance")
+async def add_balance(request: Request):
+    form = await request.form()
+    code = form.get("code")
+    name = form.get("name")
+    balance_str = form.get("balance")
+
+    norm_name = normalize_balance_name(name)
+    try:
+        bal = float(balance_str)
+    except ValueError:
+        bal = 0
+
+    new_item = {
+        "CustomerCode": str(code).strip(),
+        "CustomerName": norm_name,
+        "OriginalName": str(name).strip(),
+        "Balance": bal
+    }
+
+    update_balances([new_item])
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/delete-balance")
+async def delete_balance(request: Request):
+    form = await request.form()
+    name = form.get("customer_name")  # نام نرمال شده
+    if name:
+        current_data = load_balances_from_db()
+        # فیلتر کردن آیتم مورد نظر
+        new_data = [item for item in current_data if item.get(
+            "CustomerName") != name]
+        save_balances_to_db(new_data)
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/clear-balances")
+async def clear_balances():
+    save_balances_to_db([])  # ذخیره لیست خالی
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/delete-balance")
+async def delete_balance(request: Request):
+    form = await request.form()
+    name = form.get("customer_name")
+    if name:
+        current = load_balances_from_db()
+        if name in current:
+            del current[name]
+            save_balances_to_db(current)
+    return JSONResponse(content={"status": "ok"})
+
 
 @app.post("/upload-all", response_class=HTMLResponse)
 async def upload_all(
@@ -1816,7 +2082,12 @@ async def upload_all(
                             {rows_html}
                         </table>
                     </div>
-                    
+                    <div style="margin: 10px 0;">
+                        <label>
+                            <input type="checkbox" name="apply_balances" value="1" />
+                            اعمال مانده‌های حساب مشتریان به محاسبات (کسر از پورسانت/اضافه به طلب)
+                        </label>
+                    </div>
                     <button type="submit">محاسبه پورسانت (روزهای بازگشت: {reactivation_days})</button>
                 </form>
                 <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
@@ -1851,7 +2122,6 @@ async def upload_all(
         </body>
     </html>
     """
-    return HTMLResponse(content=html)
     return HTMLResponse(content=html)
 
 
@@ -1897,13 +2167,21 @@ async def calculate_commission(request: Request):
         """
         return HTMLResponse(content=html)
     form = await request.form()
-    print("DEBUG: تمام داده‌های فرم در calculate_commission:", dict(form))
-    form = await request.form()
     group_names = form.getlist("group_name")
     categories = form.getlist("group_category")
     percents = form.getlist("group_percent")
     due_days_list = form.getlist("group_due_days")
     cash_groups = set(form.getlist("cash_group"))
+
+    # بررسی گزینه اعمال مانده‌ها
+    apply_balances = form.get("apply_balances") == "1"
+
+    # خواندن مانده‌ها از دیتابیس
+    balances_dict = {}
+    if apply_balances:
+        balances_dict = load_balances_from_db()
+        print(
+            f"DEBUG: Apply Balances is ON. Loaded {len(balances_dict)} customer balances.")
 
     group_config: dict = {}
     for name, cat, p, dd in zip(group_names, categories, percents, due_days_list):
