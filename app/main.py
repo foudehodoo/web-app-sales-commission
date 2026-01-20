@@ -21,7 +21,6 @@ import json
 DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
 # در بالای فایل، جایی که تنظیمات دیگر هستند
-REACTIVATION_DAYS = 90  # این عدد قابل تغییر است
 
 # ---------------------------------------------------------
 #  گام ۱: افزودن ماژول‌های منطق زمانی و CRM
@@ -346,6 +345,10 @@ LAST_UPLOAD = {
     "group_config": None,
     "sales_result": None,
     "payments_result": None,
+}
+# در بالای فایل main.py کنار سایر متغیرهای سراسری
+SESSION_SETTINGS = {
+    "reactivation_days": 95  # مقدار پیش‌فرض
 }
 
 BASE_CSS = """
@@ -1217,6 +1220,7 @@ def compute_commissions(
     checks_raw: pd.DataFrame,
     group_config: dict,
     group_col: str,
+    reactivation_days: int = 90,  # <--- این پارامتر را اضافه کنید
 ):
     """
     هسته‌ی محاسبات:
@@ -1514,6 +1518,23 @@ def build_debug_checks_html(checks_df, payments_df=None):
 # ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
 
 
+@app.post("/save-reactivation-days")
+async def save_reactivation_days(request: Request):
+    """
+    این مسیر مقدار reactivation_days را که توسط جاوااسکریپت قبل از آپلود فایل ارسال شده،
+    در متغیر سراسری SESSION_SETTINGS ذخیره می‌کند.
+    """
+    form = await request.form()
+    days_str = form.get("reactivation_days", "90")
+    try:
+        days = int(days_str)
+        SESSION_SETTINGS["reactivation_days"] = days
+    except ValueError:
+        pass  # اگر عدد نبود، همان مقدار قبلی یا پیش‌فرض می‌ماند
+
+    return JSONResponse(content={"status": "ok", "saved_days": SESSION_SETTINGS["reactivation_days"]})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     nav_html = build_nav("main")
@@ -1531,14 +1552,37 @@ async def index(request: Request):
 
 @app.post("/upload-all", response_class=HTMLResponse)
 async def upload_all(
+    request: Request,
     sales_file: UploadFile = File(...),
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None),
-    # 👇 تغییر ۱: دریافت فایل سوابق از فرم HTML
     history_file: UploadFile | None = File(None)
 ):
     nav_html = build_nav("main")
 
+    # ---------------------------------------------------------
+    # 👇 تغییر مهم: خواندن از SESSION_SETTINGS به جای form 👇
+    # ---------------------------------------------------------
+
+    # 1. اول تلاش می‌کنیم از فرم بخوانیم (برای اینکه اگر کاربر دکمه را زده باشد)
+    form = await request.form()
+    reactivation_days_str = form.get("reactivation_days")
+
+    if reactivation_days_str:
+        try:
+            reactivation_days = int(reactivation_days_str)
+        except ValueError:
+            reactivation_days = 90
+    else:
+        # 2. اگر در فرم نبود (که با روش AJAX نیست)، از تنظیمات ذخیره شده می‌خوانیم
+        reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
+
+    print(
+        f"DEBUG upload-all: مقدار نهایی استفاده شده برای دکمه: {reactivation_days}")
+
+    # ---------------------------------------------------------
+    # 👆 پایان تغییر 👆
+    # ---------------------------------------------------------
     # بارگذاری فایل‌های اصلی
     df_sales = load_sales_excel(sales_file.file)
     df_pay = load_payments_excel(payments_file.file)
@@ -1748,15 +1792,18 @@ async def upload_all(
                 <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
                 <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
                 
-                <!-- 👇 اضافه کردن یک نوت کوچک برای کاربر جهت اطمینان از آپلود فایل سوابق -->
                 {'<div class="message message-success">فایل سوابق با موفقیت دریافت شد و در محاسبات لحاظ خواهد شد.</div>' if not df_history.empty else ''}
                 
                 <ul style="font-size:12px; color:#4b5563;">
                     <li>ستون <b>گروه کالا</b> از روی صفحهٔ «تعریف گروه‌های کالا (پیش‌فرض)» خوانده می‌شود.</li>
                     <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
                 </ul>
-
+                
                 <form action="/calculate-commission" method="post">
+                    <!-- 👇👇👇 این ورودی مخفی عدد 120 را به مرحله بعد می‌برد 👇👇👇 -->
+                    <input type="hidden" name="reactivation_days" value="{reactivation_days}" />
+                    <!-- 👆👆👆 حتماً دقیقا بعد از تگ form باشد 👆👆👆 -->
+
                     <div class="table-wrapper">
                         <table>
                             <tr>
@@ -1769,16 +1816,13 @@ async def upload_all(
                             {rows_html}
                         </table>
                     </div>
-                    <br/>
-                    <button type="submit">محاسبه پورسانت</button>
+                    
+                    <button type="submit">محاسبه پورسانت (روزهای بازگشت: {reactivation_days})</button>
                 </form>
-
                 <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
             </div>
-
             <script>
                 const CATEGORY_CONFIG = {js_cfg_json};
-
                 function onCategoryChange(sel) {{
                     const code = sel.value;
                     if (!code) return;
@@ -1786,11 +1830,9 @@ async def upload_all(
                     if (!cfg) return;
                     const row = sel.closest('tr');
                     if (!row) return;
-
                     const percentInput = row.querySelector('input[name="group_percent"]');
                     const dueInput = row.querySelector('input[name="group_due_days"]');
                     const cashCheckbox = row.querySelector('input[name="cash_group"]');
-
                     if (percentInput) {{
                         percentInput.value = cfg.percent != null ? cfg.percent : "";
                     }}
@@ -1809,6 +1851,7 @@ async def upload_all(
         </body>
     </html>
     """
+    return HTMLResponse(content=html)
     return HTMLResponse(content=html)
 
 
@@ -1853,7 +1896,8 @@ async def calculate_commission(request: Request):
         </html>
         """
         return HTMLResponse(content=html)
-
+    form = await request.form()
+    print("DEBUG: تمام داده‌های فرم در calculate_commission:", dict(form))
     form = await request.form()
     group_names = form.getlist("group_name")
     categories = form.getlist("group_category")
@@ -1922,8 +1966,29 @@ async def calculate_commission(request: Request):
 
     LAST_UPLOAD["group_config"] = group_config
 
+    form = await request.form()
+
+    # 1. تلاش برای خواندن از فرم (اگر کاربر از صفحه تنظیمات آمده باشد)
+    reactivation_days_str = form.get("reactivation_days")
+
+    # 2. اگر در فرم نبود، از تنظیمات ذخیره شده (Session) بخوان
+    if reactivation_days_str is None:
+        reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
+    else:
+        try:
+            reactivation_days = int(reactivation_days_str)
+        except ValueError:
+            reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
+
+    print(f"DEBUG: مقدار نهایی استفاده شده برای محاسبه: {reactivation_days}")
+    # 3. استفاده در تابع compute_commissions
     sales_result, salesperson_result, payments_result = compute_commissions(
-        df_sales, df_pay, df_chk, group_config, group_col
+        df_sales,
+        df_pay,
+        df_chk,
+        group_config,
+        group_col,
+        reactivation_days=reactivation_days  # الان دیگر ارور نمی‌دهد چون تعریف شده
     )
     # 🔹 نتایج را برای استفاده در نمودار مشتری‌ها نگه می‌داریم
     LAST_UPLOAD["sales_result"] = sales_result

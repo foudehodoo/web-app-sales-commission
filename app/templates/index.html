@@ -1,57 +1,58 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- باکس راهنمای هوشمند زمانی و CRM -->
-<div class="summary-card"
-    style="margin-bottom: 24px; border-inline-start: 4px solid #8b5cf6; background: linear-gradient(to left, #f5f3ff, rgba(255,255,255,0.95));">
-    <div class="summary-card-header">
-        <div class="summary-title">
-            <span class="summary-icon" style="background: #ede9fe; color: #7c3aed; font-size: 18px;">🕒</span>
-            <div>
-                <span class="summary-title-main" style="color: #5b21b6;">راهنمای هوشمند زمانی و CRM</span>
-                <div class="summary-title-sub">تشخیص خودکار مشتریان جدید و بازگشتی</div>
+<form action="/upload-all" method="post" enctype="multipart/form-data">
+    <!-- باکس راهنمای هوشمند زمانی و CRM -->
+    <div class="summary-card"
+        style="margin-bottom: 24px; border-inline-start: 4px solid #8b5cf6; background: linear-gradient(to left, #f5f3ff, rgba(255,255,255,0.95));">
+        <div class="summary-card-header">
+            <div class="summary-title">
+                <span class="summary-icon" style="background: #ede9fe; color: #7c3aed; font-size: 18px;">🕒</span>
+                <div>
+                    <span class="summary-title-main" style="color: #5b21b6;">راهنمای هوشمند زمانی و CRM</span>
+                    <div class="summary-title-sub">تشخیص خودکار مشتریان جدید و بازگشتی</div>
+                </div>
             </div>
         </div>
-    </div>
-    <div class="summary-card-body" style="padding-top: 8px;">
-        <ul style="margin: 0; padding-inline-start: 20px; color: #4b5563; font-size: 12px; line-height: 2;">
-            <li>
-                <strong>تشخیص مشتری جدید:</strong>
-                سیستم با بررسی فایل سوابق (مثلاً <code>1403.xlsx</code>)، مشتریان بدون سابقه را شناسایی می‌کند.
-            </li>
-            <li>
-                <strong>قانون بازگشت (Re-activation):</strong>
-                اگر مشتری بیش از
-                <!-- ورودی تنظیم روزهای بازگشت -->
-                <input type="number" name="reactivation_days" value="90" min="1" max="365"
-                    style="width: 60px; padding: 2px 6px; border: 1px solid #a78bfa; border-radius: 4px; text-align: center; font-weight: bold; color: #7c3aed;">
-                روز خرید نکرده باشد، دوباره «جدید» محسوب شده و پورسانت طلایی می‌گیرد.
-            </li>
-            <li>
-                <strong>آماده‌سازی CRM:</strong>
-                اطلاعات مشتریان جهت اتصال به پنل CRM و باشگاه مشتریان تحلیل می‌شود.
-            </li>
-        </ul>
-    </div>
-</div>
-
-<div class="hero-intro">
-    <h1>محاسبه پورسانت فروش</h1>
-    <p>
-        در سه قدم ساده، پورسانت فروشنده‌ها را بر اساس مهلت تسویه و وضعیت پرداخت‌ها حساب کن:
-        آپلود فایل‌ها → تنظیم گروه‌ها → مشاهده نتیجه و پورسانت نهایی.
-    </p>
-</div>
-
-<div class="upload-grid">
-    <!-- ستون چپ: فرم اصلی آپلود -->
-    <div class="upload-card">
-        <div class="upload-card-title">مرحله ۱: آپلود فایل‌ها</div>
-        <div class="upload-card-subtitle">
-            حداقل فایل فروش و پرداخت‌ها را انتخاب کن. فایل چک‌ها اختیاری است.
+        <div class="summary-card-body" style="padding-top: 8px;">
+            <ul style="margin: 0; padding-inline-start: 20px; color: #4b5563; font-size: 12px; line-height: 2;">
+                <li>
+                    <strong>تشخیص مشتری جدید:</strong>
+                    سیستم با بررسی فایل سوابق (مثلاً <code>1403.xlsx</code>)، مشتریان بدون سابقه را شناسایی می‌کند.
+                </li>
+                <li>
+                    <strong>قانون بازگشت (Re-activation):</strong>
+                    اگر مشتری بیش از
+                    <!-- ورودی تنظیم روزهای بازگشت -->
+                    <input type="number" name="reactivation_days" value="90" min="1" max="365"
+                        style="width: 60px; padding: 2px 6px; border: 1px solid #a78bfa; border-radius: 4px; text-align: center; font-weight: bold; color: #7c3aed;">
+                    روز خرید نکرده باشد، دوباره «جدید» محسوب شده و پورسانت طلایی می‌گیرد.
+                </li>
+                <li>
+                    <strong>آماده‌سازی CRM:</strong>
+                    اطلاعات مشتریان جهت اتصال به پنل CRM و باشگاه مشتریان تحلیل می‌شود.
+                </li>
+            </ul>
         </div>
+    </div>
 
-        <form action="/upload-all" method="post" enctype="multipart/form-data">
+    <div class="hero-intro">
+        <h1>محاسبه پورسانت فروش</h1>
+        <p>
+            در سه قدم ساده، پورسانت فروشنده‌ها را بر اساس مهلت تسویه و وضعیت پرداخت‌ها حساب کن:
+            آپلود فایل‌ها → تنظیم گروه‌ها → مشاهده نتیجه و پورسانت نهایی.
+        </p>
+    </div>
+
+    <div class="upload-grid">
+        <!-- ستون چپ: فرم اصلی آپلود -->
+        <div class="upload-card">
+            <div class="upload-card-title">مرحله ۱: آپلود فایل‌ها</div>
+            <div class="upload-card-subtitle">
+                حداقل فایل فروش و پرداخت‌ها را انتخاب کن. فایل چک‌ها اختیاری است.
+            </div>
+
+
             <div class="form-row">
                 <label>فایل اکسل فروش‌ها</label><br />
                 <input type="file" name="sales_file" accept=".xlsx,.xls" required />
@@ -92,180 +93,162 @@
             </div>
 
             <button type="submit">مرحله بعد: تعریف تنظیمات گروه‌ها</button>
-        </form>
-    </div>
 
-    <!-- ستون راست: راهنما + کارت‌های توضیح فایل‌ها -->
-    <div class="upload-card upload-card-light">
-        <div class="upload-card-title">راهنمای ساخت فایل‌ها</div>
-        <div class="upload-card-subtitle">
-            اگر ساختار ستون‌ها را مشابه پیشنهادها تنظیم کنی، برنامه بیشترین تطبیق خودکار را انجام می‌دهد.
         </div>
 
-        <div class="summary-grid">
-
-            <!-- فروش‌ها -->
-            <div class="summary-card summary-sales">
-                <div class="summary-card-header">
-                    <div class="summary-title">
-                        <div class="summary-icon">🧾</div>
-                        <div>
-                            <div class="summary-title-main">فایل فروش‌ها</div>
-                            <div class="summary-title-sub">گزارش فاکتورهای فروش از نرم‌افزار حسابداری</div>
-                        </div>
-                    </div>
-                    <button type="button" class="pill-button" data-toggle="hint" data-target="sales-hint">
-                        نمایش راهنما
-                    </button>
-                </div>
-                <div id="sales-hint" class="summary-card-body hint-hidden">
-                    <div class="hint-title">ستون‌های پیشنهادی (یا معادل فارسی‌شان):</div>
-
-                    <div class="pill-section">
-                        <div class="pill-section-title">ستون‌های اصلی فاکتور</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">InvoiceID (شماره فاکتور / شماره سند)</span>
-                            <span class="badge-pill">InvoiceDate (تاریخ فاکتور – شمسی)</span>
-                            <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
-                            <span class="badge-pill">CustomerName (نام مشتری / طرف حساب)</span>
-                            <span class="badge-pill">Amount (جمع کل فاکتور)</span>
-                        </div>
-                    </div>
-
-                    <div class="pill-section">
-                        <div class="pill-section-title">ستون‌های مربوط به کالا</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">ProductCode (کد کالا)</span>
-                            <span class="badge-pill">ProductName (نام کالا)</span>
-                            <span class="badge-pill">ProductGroup (گروه کالا – برای تعیین پورسانت)</span>
-                        </div>
-                    </div>
-
-                    <div class="pill-section">
-                        <div class="pill-section-title">ستون‌های اختیاری</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">Salesperson (نام ویزیتور)</span>
-                            <span class="badge-pill">DueDate (تاریخ سررسید، اگر در خود سیستم دارید)</span>
-                        </div>
-                    </div>
-
-                    <p class="hint-note">
-                        لازم نیست اسم ستون‌ها دقیقاً همین باشد؛ لودر فروش تلاش می‌کند اسم‌های رایج فارسی
-                        (مثل «شماره فاکتور»، «نام طرف حساب»، «جمع کل» و …) را به این ستون‌های استاندارد تبدیل کند.
-                    </p>
-                </div>
+        <!-- ستون راست: راهنما + کارت‌های توضیح فایل‌ها -->
+        <div class="upload-card upload-card-light">
+            <div class="upload-card-title">راهنمای ساخت فایل‌ها</div>
+            <div class="upload-card-subtitle">
+                اگر ساختار ستون‌ها را مشابه پیشنهادها تنظیم کنی، برنامه بیشترین تطبیق خودکار را انجام می‌دهد.
             </div>
 
-            <!-- پرداخت‌ها -->
-            <div class="summary-card summary-payments">
-                <div class="summary-card-header">
-                    <div class="summary-title">
-                        <div class="summary-icon">🏦</div>
-                        <div>
-                            <div class="summary-title-main">فایل پرداخت‌ها</div>
-                            <div class="summary-title-sub">خروجی دفتر حساب بانکی / دریافت‌ها</div>
-                        </div>
-                    </div>
-                    <button type="button" class="pill-button" data-toggle="hint" data-target="payments-hint">
-                        نمایش راهنما
-                    </button>
-                </div>
-                <div id="payments-hint" class="summary-card-body hint-hidden">
-                    <div class="hint-title">فرمت‌های رایج که برنامه پشتیبانی می‌کند:</div>
+            <div class="summary-grid">
 
-                    <div class="pill-section">
-                        <div class="pill-section-title">۱) دفتر حساب بانکی</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">تاریخ</span>
-                            <span class="badge-pill">شماره / شماره سند</span>
-                            <span class="badge-pill">نوع</span>
-                            <span class="badge-pill">واریزی</span>
-                            <span class="badge-pill">برداشتی</span>
-                            <span class="badge-pill">کد طرف حساب</span>
-                            <span class="badge-pill">واریز یا برداشت کننده (نام مشتری)</span>
-                            <span class="badge-pill">توضیحات</span>
-                        </div>
-                        <p class="hint-note">
-                            لودر پرداخت‌ها از روی این ستون‌ها، ردیف‌های «واریزی» را پیدا می‌کند و آن‌ها را
-                            به فرم استاندارد تبدیل می‌کند.
-                        </p>
-                    </div>
-
-                    <div class="pill-section">
-                        <div class="pill-section-title">۲) فرم ساده با هدر مستقیم</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">PaymentDate (یا «تاریخ» / «تاریخ سند»)</span>
-                            <span class="badge-pill">Amount (یا «مبلغ» / «واریزی» / «بستانکار»)</span>
-                            <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
-                            <span class="badge-pill">CustomerName (اختیاری)</span>
-                            <span class="badge-pill">Description (شرح / توضیحات)</span>
-                            <span class="badge-pill">PaymentID (شماره سند / شماره تراکنش)</span>
-                        </div>
-                    </div>
-
-                    <p class="hint-note">
-                        در نهایت داخل برنامه همه‌ی پرداخت‌ها به شکل استاندارد
-                        <b>PaymentID, PaymentDate, Amount, CustomerCode, CustomerName, Description</b>
-                        ذخیره می‌شوند.
-                    </p>
-                </div>
-            </div>
-
-            <!-- چک‌ها -->
-            <div class="summary-card summary-checks">
-                <div class="summary-card-header">
-                    <div class="summary-title">
-                        <div class="summary-icon">💳</div>
-                        <div>
-                            <div class="summary-title-main">فایل چک‌ها (اختیاری)</div>
-                            <div class="summary-title-sub">اگر می‌خواهی پرداخت‌های نوع «چک» را دقیق به مشتری وصل کنیم
+                <!-- فروش‌ها -->
+                <div class="summary-card summary-sales">
+                    <div class="summary-card-header">
+                        <div class="summary-title">
+                            <div class="summary-icon">🧾</div>
+                            <div>
+                                <div class="summary-title-main">فایل فروش‌ها</div>
+                                <div class="summary-title-sub">گزارش فاکتورهای فروش از نرم‌افزار حسابداری</div>
                             </div>
                         </div>
+                        <button type="button" class="pill-button" data-toggle="hint" data-target="sales-hint">
+                            نمایش راهنما
+                        </button>
                     </div>
-                    <button type="button" class="pill-button" data-toggle="hint" data-target="checks-hint">
-                        نمایش راهنما
-                    </button>
-                </div>
-                <div id="checks-hint" class="summary-card-body hint-hidden">
-                    <div class="pill-section">
-                        <div class="pill-section-title">ستون‌های پیشنهادی:</div>
-                        <div class="pill-row">
-                            <span class="badge-pill">CheckNumber (شماره چک)</span>
-                            <span class="badge-pill">CustomerCode (کد مشتری / کد طرف حساب)</span>
-                            <span class="badge-pill">CustomerName (نام صاحب چک)</span>
-                            <span class="badge-pill">Amount (مبلغ چک)</span>
-                            <span class="badge-pill">BankName (نام بانک)</span>
-                            <span class="badge-pill">Description (توضیحات اضافی)</span>
+                    <div id="sales-hint" class="summary-card-body hint-hidden">
+                        <div class="hint-title">ستون‌های پیشنهادی (یا معادل فارسی‌شان):</div>
+
+                        <div class="pill-section">
+                            <div class="pill-section-title">ستون‌های اصلی فاکتور</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">InvoiceID (شماره فاکتور / شماره سند)</span>
+                                <span class="badge-pill">InvoiceDate (تاریخ فاکتور – شمسی)</span>
+                                <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
+                                <span class="badge-pill">CustomerName (نام مشتری / طرف حساب)</span>
+                                <span class="badge-pill">Amount (جمع کل فاکتور)</span>
+                            </div>
                         </div>
+
+                        <div class="pill-section">
+                            <div class="pill-section-title">ستون‌های مربوط به کالا</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">ProductCode (کد کالا)</span>
+                                <span class="badge-pill">ProductName (نام کالا)</span>
+                                <span class="badge-pill">ProductGroup (گروه کالا – برای تعیین پورسانت)</span>
+                            </div>
+                        </div>
+
+                        <div class="pill-section">
+                            <div class="pill-section-title">ستون‌های اختیاری</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">Salesperson (نام ویزیتور)</span>
+                                <span class="badge-pill">DueDate (تاریخ سررسید، اگر در خود سیستم دارید)</span>
+                            </div>
+                        </div>
+
+                        <p class="hint-note">
+                            لازم نیست اسم ستون‌ها دقیقاً همین باشد؛ لودر فروش تلاش می‌کند اسم‌های رایج فارسی
+                            (مثل «شماره فاکتور»، «نام طرف حساب»، «جمع کل» و …) را به این ستون‌های استاندارد تبدیل کند.
+                        </p>
                     </div>
-                    <p class="hint-note">
-                        اگر در توضیحات پرداخت‌ها شماره‌ی چک نوشته شده باشد، برنامه از روی ستون <b>CheckNumber</b>
-                        می‌تواند پرداخت‌های نوع «Check</b> را به مشتری درست وصل کند.
-                    </p>
+                </div>
+
+                <!-- پرداخت‌ها -->
+                <div class="summary-card summary-payments">
+                    <div class="summary-card-header">
+                        <div class="summary-title">
+                            <div class="summary-icon">🏦</div>
+                            <div>
+                                <div class="summary-title-main">فایل پرداخت‌ها</div>
+                                <div class="summary-title-sub">خروجی دفتر حساب بانکی / دریافت‌ها</div>
+                            </div>
+                        </div>
+                        <button type="button" class="pill-button" data-toggle="hint" data-target="payments-hint">
+                            نمایش راهنما
+                        </button>
+                    </div>
+                    <div id="payments-hint" class="summary-card-body hint-hidden">
+                        <div class="hint-title">فرمت‌های رایج که برنامه پشتیبانی می‌کند:</div>
+
+                        <div class="pill-section">
+                            <div class="pill-section-title">۱) دفتر حساب بانکی</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">تاریخ</span>
+                                <span class="badge-pill">شماره / شماره سند</span>
+                                <span class="badge-pill">نوع</span>
+                                <span class="badge-pill">واریزی</span>
+                                <span class="badge-pill">برداشتی</span>
+                                <span class="badge-pill">کد طرف حساب</span>
+                                <span class="badge-pill">واریز یا برداشت کننده (نام مشتری)</span>
+                                <span class="badge-pill">توضیحات</span>
+                            </div>
+                            <p class="hint-note">
+                                لودر پرداخت‌ها از روی این ستون‌ها، ردیف‌های «واریزی» را پیدا می‌کند و آن‌ها را
+                                به فرم استاندارد تبدیل می‌کند.
+                            </p>
+                        </div>
+
+                        <div class="pill-section">
+                            <div class="pill-section-title">۲) فرم ساده با هدر مستقیم</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">PaymentDate (یا «تاریخ» / «تاریخ سند»)</span>
+                                <span class="badge-pill">Amount (یا «مبلغ» / «واریزی» / «بستانکار»)</span>
+                                <span class="badge-pill">CustomerCode (کد طرف حساب / کد مشتری)</span>
+                                <span class="badge-pill">CustomerName (اختیاری)</span>
+                                <span class="badge-pill">Description (شرح / توضیحات)</span>
+                                <span class="badge-pill">PaymentID (شماره سند / شماره تراکنش)</span>
+                            </div>
+                        </div>
+
+                        <p class="hint-note">
+                            در نهایت داخل برنامه همه‌ی پرداخت‌ها به شکل استاندارد
+                            <b>PaymentID, PaymentDate, Amount, CustomerCode, CustomerName, Description</b>
+                            ذخیره می‌شوند.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- چک‌ها -->
+                <div class="summary-card summary-checks">
+                    <div class="summary-card-header">
+                        <div class="summary-title">
+                            <div class="summary-icon">💳</div>
+                            <div>
+                                <div class="summary-title-main">فایل چک‌ها (اختیاری)</div>
+                                <div class="summary-title-sub">اگر می‌خواهی پرداخت‌های نوع «چک» را دقیق به مشتری وصل
+                                    کنیم
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="pill-button" data-toggle="hint" data-target="checks-hint">
+                            نمایش راهنما
+                        </button>
+                    </div>
+                    <div id="checks-hint" class="summary-card-body hint-hidden">
+                        <div class="pill-section">
+                            <div class="pill-section-title">ستون‌های پیشنهادی:</div>
+                            <div class="pill-row">
+                                <span class="badge-pill">CheckNumber (شماره چک)</span>
+                                <span class="badge-pill">CustomerCode (کد مشتری / کد طرف حساب)</span>
+                                <span class="badge-pill">CustomerName (نام صاحب چک)</span>
+                                <span class="badge-pill">Amount (مبلغ چک)</span>
+                                <span class="badge-pill">BankName (نام بانک)</span>
+                                <span class="badge-pill">Description (توضیحات اضافی)</span>
+                            </div>
+                        </div>
+                        <p class="hint-note">
+                            اگر در توضیحات پرداخت‌ها شماره‌ی چک نوشته شده باشد، برنامه از روی ستون <b>CheckNumber</b>
+                            می‌تواند پرداخت‌های نوع «Check</b> را به مشتری درست وصل کند.
+                        </p>
+                    </div>
                 </div>
             </div>
+
         </div>
-
     </div>
-</div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-    document.addEventListener('DOMContentLoaded', function () {
-        document.querySelectorAll('[data-toggle="hint"]').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                var targetId = btn.getAttribute('data-target');
-                var panel = document.getElementById(targetId);
-                if (!panel) return;
-                panel.classList.toggle('hint-hidden');
-                if (panel.classList.contains('hint-hidden')) {
-                    btn.textContent = 'نمایش راهنما';
-                } else {
-                    btn.textContent = 'بستن راهنما';
-                }
-            });
-        });
-    });
-</script>
+</form>
 {% endblock %}
