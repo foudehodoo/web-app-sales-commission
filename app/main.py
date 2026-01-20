@@ -1583,7 +1583,7 @@ async def customer_balances_page(request: Request):
                 <td style="direction: ltr; text-align: right; color: {color}; font-weight: bold;">{balance_str}</td>
                 <td>
                     <button type="button" class="pill-button" onclick="editBalance('{name}', '{code}', {balance})">ویرایش</button>
-                    <button type="button" class="pill-button" style="color:red;" onclick="deleteBalance('{name}')">حذف</button>
+                    <button type="button" class="pill-button" style="color:red;" onclick="deleteBalance('{code}', '{name}')">حذف</button>
                 </td>
             </tr>
             """
@@ -1597,15 +1597,20 @@ async def customer_balances_page(request: Request):
             <title>مدیریت مانده حساب مشتریان</title>
             {BASE_CSS}
             <script>
-                function deleteBalance(name) {{
-                    if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
-                        fetch('/delete-balance', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-                            body: 'customer_name=' + encodeURIComponent(name)
-                        }}).then(() => location.reload());
-                    }}
+            function deleteBalance(code, name) {{
+                if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
+                    const formData = new FormData();
+                    // اضافه کردن کد مشتری (بسیار مهم)
+                    formData.append('customer_code', code);
+                    // اضافه کردن نام مشتری (برای اطمینان)
+                    formData.append('customer_name', name);
+                    
+                    fetch('/delete-balance', {{
+                        method: 'POST',
+                        body: formData
+                    }}).then(() => location.reload());
                 }}
+            }}
                 
                 function editBalance(name, code, balance) {{
                     const newCode = prompt("کد مشتری:", code);
@@ -1788,14 +1793,41 @@ async def add_balance(request: Request):
 @app.post("/delete-balance")
 async def delete_balance(request: Request):
     form = await request.form()
-    name = form.get("customer_name")  # نام نرمال شده
-    if name:
-        current_data = load_balances_from_db()
-        # فیلتر کردن آیتم مورد نظر
-        new_data = [item for item in current_data if item.get(
-            "CustomerName") != name]
+    # دریافت کد و نام از فرم
+    code = form.get("customer_code")
+    name = form.get("customer_name")
+
+    if not code and not name:
+        return JSONResponse(content={"status": "error", "message": "کد یا نام ارسال نشده است"}, status_code=400)
+
+    current_data = load_balances_from_db()
+    new_data = []
+    found = False
+
+    for item in current_data:
+        item_code = str(item.get("CustomerCode", ""))
+        item_name = item.get("CustomerName", "")
+
+        # اولویت با حذف بر اساس کد مشتری است (دقیق‌تر)
+        should_delete = False
+        if code:
+            if item_code == str(code):
+                should_delete = True
+        elif name:
+            # اگر کد نبود، با نام مقایسه کن (فقط به عنوان فال‌بک)
+            if item_name == name:
+                should_delete = True
+
+        if should_delete:
+            found = True
+        else:
+            new_data.append(item)
+
+    if found:
         save_balances_to_db(new_data)
-    return JSONResponse(content={"status": "ok"})
+        return JSONResponse(content={"status": "ok"})
+    else:
+        return JSONResponse(content={"status": "error", "message": "موردی یافت نشد"}, status_code=404)
 
 
 @app.post("/clear-balances")
@@ -2083,7 +2115,7 @@ async def upload_all(
                             اعمال مانده‌های حساب مشتریان به محاسبات (کسر از پورسانت/اضافه به طلب)
                         </label>
                     </div>
-                    <button type="submit">محاسبه پورسانت (روزهای بازگشت: {reactivation_days})</button>
+                    <button type="submit">محاسبه پورسانت </button>
                 </form>
                 <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
             </div>
