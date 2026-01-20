@@ -1800,19 +1800,14 @@ async def delete_balance(request: Request):
 
 @app.post("/clear-balances")
 async def clear_balances():
-    save_balances_to_db([])  # ذخیره لیست خالی
-    return JSONResponse(content={"status": "ok"})
-
-
-@app.post("/delete-balance")
-async def delete_balance(request: Request):
-    form = await request.form()
-    name = form.get("customer_name")
-    if name:
-        current = load_balances_from_db()
-        if name in current:
-            del current[name]
-            save_balances_to_db(current)
+    """
+    مسیر مربوط به دکمه «حذف تمام مانده‌ها».
+    یک دیتافریم خالی با ستون‌های صحیح می‌سازیم تا تابع save_balances_to_db خطا ندهد.
+    """
+    # ساخت یک دیتافریم خالی با ستون‌های مورد نیاز برای جلوگیری از خطای sort_values
+    empty_df = pd.DataFrame(
+        columns=["CustomerCode", "CustomerName", "OriginalName", "Balance"])
+    save_balances_to_db(empty_df)
     return JSONResponse(content={"status": "ok"})
 
 
