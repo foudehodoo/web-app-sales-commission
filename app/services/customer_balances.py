@@ -204,3 +204,40 @@ def update_balances(new_items: list[dict]):
         key = item["CustomerName"]
         current_map[key] = item
     save_balances_to_db(list(current_map.values()))
+
+
+def add_customer_mapping(name: str, code: str):
+    """
+    افزودن یا ویرایش یک مپینگ نام -> کد به دیتابیس مانده‌ها.
+    این تابع برای بخش 'رفع اشکال دستی' استفاده می‌شود.
+    اگر نام وجود داشت، کد آن را آپدیت می‌کند. اگر نبود، با مانده ۰ اضافه می‌کند.
+    """
+    norm_name = normalize_name(name)
+    clean_code = str(code).strip()
+
+    if not norm_name or not clean_code:
+        return False
+
+    current_data = load_balances_from_db()
+    updated_data = []
+    found = False
+
+    for item in current_data:
+        if item.get("CustomerName") == norm_name:
+            # آپدیت کد اگر نام وجود داشت
+            item["CustomerCode"] = clean_code
+            item["OriginalName"] = name  # آپدیت نام اصلی برای نمایش بهتر
+            found = True
+        updated_data.append(item)
+
+    if not found:
+        # افزودن جدید
+        updated_data.append({
+            "CustomerCode": clean_code,
+            "CustomerName": norm_name,
+            "OriginalName": name,
+            "Balance": 0  # مانده پیش‌فرض صفر است
+        })
+
+    save_balances_to_db(updated_data)
+    return True
