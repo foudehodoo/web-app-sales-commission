@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi.responses import FileResponse
 import io  # <--- این خط را اضافه کنید
 from datetime import timedelta
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
@@ -19,7 +19,6 @@ from app.services.customer_balances import (
     add_customer_mapping  # <--- این خط را اضافه کنید
 )
 
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from datetime import datetime
 import jdatetime
 from fastapi import FastAPI, UploadFile, File, Request
@@ -953,6 +952,7 @@ def build_nav(active: str) -> str:
     return f'''
     <div class="navbar">
         <a href="/" class="{cls("main")}">محاسبه پورسانت</a>
+        <a href="/bind-codes" class="{cls("bind")}">عطف کد به مشتری</a>
         <a href="/fix-unresolved" class="{cls("fix")}">رفع اشکال کدها</a>
         <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا</a>
         <a href="/group-items" class="{cls("items")}">تخصیص کالا به گروه</a>
@@ -1225,16 +1225,34 @@ def extract_customer_for_payment(
 ):
     """
     تشخیص کد مشتری برای هر پرداخت:
-    1) نام پرداخت را با دیتابیس مانده‌ها تطبیق می‌دهد تا کد را پیدا کند.
-    2) اگر چک است، نام صاحب چک را با دیتابیس مانده‌ها تطبیق می‌دهد.
-    3) اگر کدی پیدا نشد، None برمی‌گرداند (دیگر از کد خود فایل استفاده نمی‌کند).
-    خروجی نهایی یک کد مشتری (رشته) است که باید با کد موجود در فایل فروش مقایسه شود.
+    1) بررسی لیست سیاه (اگر نام در لیست سیاه بود، کد None برگردان).
+    2) نام پرداخت را با دیتابیس مانده‌ها تطبیق می‌دهد.
+    3) اگر چک است، نام صاحب چک را با دیتابیس مانده‌ها چک می‌کند.
     """
     name = row.get("CustomerName")
     stype = row.get("SourceType")
     desc_str = str(row.get("Description") or "")
 
-    # 1) اولویت ۱: تطبیق نام با دیتابیس مانده‌ها
+    # ---------------------------------------------------------
+    # 1. بررسی لیست سیاه (Blacklist Check)
+    # ---------------------------------------------------------
+    if pd.notna(name):
+        norm_name = normalize_persian_name(str(name))
+        blacklist_path = "blacklist.xlsx"
+        if os.path.exists(blacklist_path):
+            try:
+                df_black = pd.read_excel(blacklist_path)
+                if "CustomerName" in df_black.columns:
+                    # نرمال‌سازی نام‌های لیست سیاه برای مقایسه
+                    black_set = set(df_black["CustomerName"].apply(
+                        normalize_persian_name))
+                    if norm_name in black_set:
+                        return None  # نام در لیست سیاه بود، کدی برگردان
+            except Exception as e:
+                print(f"Error checking blacklist: {e}")
+    # ---------------------------------------------------------
+
+    # 2) اولویت ۱: تطبیق نام با دیتابیس مانده‌ها
     if name_code_map_from_balances is not None and pd.notna(name):
         key = name_key_for_matching(name)
         if key:
@@ -1242,7 +1260,7 @@ def extract_customer_for_payment(
             if mapped_code:
                 return canonicalize_code(mapped_code)
 
-    # 2) اولویت ۲: اگر چک است، از روی فایل چک‌ها نام را بگیریم و با دیتابیس مانده‌ها چک کنیم
+    # 3) اولویت ۲: اگر چک است، از روی فایل چک‌ها نام را بگیریم و با دیتابیس مانده‌ها چک کنیم
     if stype == "Check" and checks_df is not None and not checks_df.empty:
         candidates: list[str] = []
         # استخراج شماره چک از ستون CheckNumber یا توضیحات
@@ -1272,7 +1290,6 @@ def extract_customer_for_payment(
                 matches = checks_df.loc[chk_nums == num]
             else:
                 matches = pd.DataFrame()
-
             if not matches.empty:
                 chk_row = matches.iloc[0]
                 # اگر خود فایل چک‌ها کد داشت
@@ -1287,7 +1304,6 @@ def extract_customer_for_payment(
                         if mapped2:
                             return canonicalize_code(mapped2)
 
-    # 3) اولویت ۳: حذف شد. دیگر از کد خود فایل پرداخت استفاده نمی‌کنیم.
     # اگر به اینجا رسیدیم یعنی کدی پیدا نشده است.
     return None
 
@@ -1324,6 +1340,27 @@ def prepare_payments(
     # ---------------------------------------------------------
     name_code_map_from_balances = build_name_code_map_from_balances()
 
+    # ---------------------------------------------------------
+    # اصلاحیه جدید: ساخت مپ شماره چک -> نام صاحب چک (از فایل چک‌ها)
+    # این مپ برای جایگزینی نام در پرداخت‌های چکی استفاده می‌شود
+    # ---------------------------------------------------------
+    check_number_to_name_map = {}
+    if checks_df is not None and not checks_df.empty:
+        # نرمال‌سازی شماره چک‌ها در فایل چک برای جستجوی دقیق
+        if "CheckNumber" in checks_df.columns:
+            chk_nums = (
+                checks_df["CheckNumber"]
+                .astype(str)
+                .str.replace(r"\D", "", regex=True)
+                .str.lstrip("0")
+            )
+            # نگاشت شماره تمیز شده -> نام مشتری
+            # اگر چند چک با یک شماره وجود داشت، اولین آن را در نظر می‌گیریم
+            for idx, num in chk_nums.items():
+                if pd.notna(num) and num != "":
+                    check_number_to_name_map[num] = checks_df.at[idx,
+                                                                 "CustomerName"]
+
     unresolved_items = []
 
     def resolve_and_log(row):
@@ -1332,32 +1369,56 @@ def prepare_payments(
         date = row.get("PaymentDate")
         source = row.get("SourceType", "Payment")
 
+        # ---------------------------------------------------------
+        # اصلاحیه: اگر پرداخت چک است، نام را از مپ فایل چک‌ها بگیر
+        # ---------------------------------------------------------
+        final_name_for_display = name  # پیش‌فرض همان نام فایل پرداخت است
+
+        if source == "Check":
+            # استخراج شماره چک از ردیف پرداخت
+            check_val = row.get("CheckNumber")
+            desc_str = str(row.get("Description") or "")
+            candidates = []
+
+            if pd.notna(check_val):
+                candidates.append(str(check_val))
+
+            import re
+            m = re.search(r"(\d{3,10})", desc_str)
+            if m:
+                candidates.append(m.group(1))
+
+            # تلاش برای پیدا کردن نام در مپ چک‌ها
+            for cand in candidates:
+                num = re.sub(r"\D", "", str(cand)).lstrip("0")
+                if num in check_number_to_name_map:
+                    final_name_for_display = check_number_to_name_map[num]
+                    break
+
         # تلاش برای پیدا کردن کد
+        # نکته: تابع extract_customer_for_payment منطق کامل (لیست سیاه و دیتابیس) را انجام می‌دهد
         code = extract_customer_for_payment(
             row,
             checks_df,
             name_code_map_from_balances
         )
 
-        # --- تغییر جدید: اگر کدی پیدا نشد، مقدار "یافت نشد" را برگردان ---
         if pd.isna(code):
-            if pd.notna(name):
+            if pd.notna(final_name_for_display):
                 unresolved_items.append({
-                    "Name": name,
+                    "Name": final_name_for_display,  # استفاده از نام اصلاح شده برای لیست یافت نشده‌ها
                     "Amount": amount,
                     "Date": date,
                     "Source": source
                 })
-            return "یافت نشد"  # <--- این خط تغییر کرد
+            return "یافت نشد"
 
         return code
-        # ----------------------------------------------------------------
 
     payments_df["ResolvedCustomer"] = payments_df.apply(
         resolve_and_log, axis=1)
 
     # نکته: برای ResolvedCustomerKey چون "یافت نشد" رشته است، canonicalize کار نمیکند
-    # پس اگر "یافت نشد" بود، همان را نگه می‌داریم تا در اکسل نمایش داده شود
     def clean_key(val):
         if val == "یافت نشد":
             return "یافت نشد"
@@ -1366,24 +1427,104 @@ def prepare_payments(
     payments_df["ResolvedCustomerKey"] = payments_df["ResolvedCustomer"].map(
         clean_key)
 
+    # ---------------------------------------------------------
+    # اصلاحیه نهایی: به‌روزرسانی ستون CustomerName در دیتافریم اصلی
+    # تا در جداول خروجی، نام صحیح (نام صاحب چک) نمایش داده شود
+    # ---------------------------------------------------------
+    # چون در تابع resolve_and_log دسترسی مستقیم به ستون دیتافریم اصلی نداریم که تغییر دهیم،
+    # اینجا یک بار دیگر روی دیتافریم می‌چرخیم و نام‌های چکی را اصلاح می‌کنیم.
+    # این کار کمی هزینه دارد اما تمیزترین راه برای حفظ ساختار قبلی است.
+
+    def update_check_names(row):
+        if row.get("SourceType") == "Check":
+            check_val = row.get("CheckNumber")
+            desc_str = str(row.get("Description") or "")
+            candidates = []
+
+            if pd.notna(check_val):
+                candidates.append(str(check_val))
+
+            import re
+            m = re.search(r"(\d{3,10})", desc_str)
+            if m:
+                candidates.append(m.group(1))
+
+            for cand in candidates:
+                num = re.sub(r"\D", "", str(cand)).lstrip("0")
+                if num in check_number_to_name_map:
+                    return check_number_to_name_map[num]
+        return row.get("CustomerName")
+
+    # اعمال تغییر نام روی دیتافریم نهایی
+    payments_df["CustomerName"] = payments_df.apply(update_check_names, axis=1)
+
     return payments_df, unresolved_items
 
 
 def build_name_code_map_from_balances() -> dict[str, str]:
     """
     ساخت دیکشنری نام نرمال شده -> کد مشتری از روی دیتابیس مانده‌ها.
-    این دیکشنری برای وصل کردن اسامی فایل‌های پرداخت/چک به کدهای مشتری استفاده می‌شود.
+    (نسخه اصلاح شده: نام‌های موجود در لیست سیاه حذف می‌شوند)
     """
     balances = load_balances_from_db()
     name_to_code = {}
+
+    # --- خواندن لیست سیاه برای حذف نام‌های ممنوعه ---
+    blacklist_set = set()
+    blacklist_path = "blacklist.xlsx"
+    if os.path.exists(blacklist_path):
+        try:
+            df_black = pd.read_excel(blacklist_path)
+            if "CustomerName" in df_black.columns:
+                blacklist_set = set(
+                    df_black["CustomerName"].apply(normalize_persian_name))
+        except Exception as e:
+            print(f"Error loading blacklist in build_name_code_map: {e}")
+    # ----------------------------------------------------
+
     for item in balances:
-        name = item.get("CustomerName")  # نام نرمال شده در دیتابیس
+        name = item.get("CustomerName")
         code = item.get("CustomerCode")
         if name and code:
-            # کلید را نرمال می‌کنیم تا مطمئن شویم فاصله‌ها و حروف اضافه حذف شده‌اند
             key = name_key_for_matching(name)
             if key:
+                # چک کردن لیست سیاه
+                norm_name = normalize_persian_name(name)
+                if norm_name in blacklist_set:
+                    continue  # اگر در لیست سیاه بود، اصلاً اضافه نکن
+
                 name_to_code[key] = str(code).strip()
+    return name_to_code
+
+
+def load_name_code_map_from_excel() -> dict[str, str]:
+    """
+    خواندن نگاشت نام -> کد از فایل اکسل 'customer_codes_bind.xlsx'.
+    این فایل باید شامل ستون‌های CustomerName و CustomerCode باشد.
+    """
+    file_path = "customer_codes_bind.xlsx"
+    name_to_code = {}
+
+    if not os.path.exists(file_path):
+        return name_to_code
+
+    try:
+        df = pd.read_excel(file_path)
+        # بررسی وجود ستون‌های لازم
+        if "CustomerName" in df.columns and "CustomerCode" in df.columns:
+            for _, row in df.iterrows():
+                name = str(row.get("CustomerName", "")).strip()
+                code = str(row.get("CustomerCode", "")).strip()
+
+                # فقط اگر کد معتبر است و "یافت نشد" نیست
+                if code and code != "یافت نشد" and name:
+                    # نرمال‌سازی نام برای تطبیق بهتر
+                    key = name_key_for_matching(name)
+                    if key:
+                        name_to_code[key] = code
+    except Exception as e:
+        print(f"Error loading bind excel: {e}")
+
     return name_to_code
 
 
@@ -2084,9 +2225,6 @@ async def upload_all(
         # 2. اگر در فرم نبود (که با روش AJAX نیست)، از تنظیمات ذخیره شده می‌خوانیم
         reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
 
-    print(
-        f"DEBUG upload-all: مقدار نهایی استفاده شده برای دکمه: {reactivation_days}")
-
     # ---------------------------------------------------------
     # 👆 پایان تغییر 👆
     # ---------------------------------------------------------
@@ -2492,8 +2630,6 @@ async def calculate_commission(request: Request):
             reactivation_days = int(reactivation_days_str)
         except ValueError:
             reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
-    print(f"DEBUG: مقدار نهایی استفاده شده برای محاسبه: {reactivation_days}")
-
     # 3. استفاده در تابع compute_commissions
     sales_result, salesperson_result, payments_result = compute_commissions(
         df_sales,
@@ -3338,119 +3474,503 @@ async def group_items_page():
 @app.get("/fix-unresolved", response_class=HTMLResponse)
 async def fix_unresolved_page(request: Request):
     nav_html = build_nav("fix")
+    # --- دیباگ و بررسی فایل ---
+    import os
+    current_dir = os.getcwd()
+    file_path = "customer_codes_bind.xlsx"
+    file_exists = os.path.exists(file_path)
 
-    unresolved = LAST_UPLOAD.get("unresolved_payments", [])
-
-    rows_html = ""
-    if not unresolved:
-        rows_html = "<tr><td colspan='4' style='text-align:center; color:green;'>همه پرداخت‌ها با موفقیت به کد مشتری متصل شدند! 🎉</td></tr>"
-    else:
-        # حذف موارد تکراری بر اساس نام
-        unique_unresolved = {item['Name']: item for item in unresolved}.values()
-
-        for item in unique_unresolved:
-            name = item['Name']
-            amount = item['Amount']
-            # فرمت مبلغ
-            amount_str = f"{amount:,.0f}" if pd.notna(amount) else "-"
-
-            rows_html += f"""
-            <tr>
-                <td>{name}</td>
-                <td style="direction:ltr; text-align:right;">{amount_str}</td>
-                <td>
-                    <input type="text" class="code-input" data-name="{name}" placeholder="کد مشتری را وارد کنید" />
-                </td>
-                <td>
-                    <button type="button" class="pill-button" onclick="saveCode('{name}')">ذخیره</button>
-                </td>
-            </tr>
-            """
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>رفع اشکال کدهای مشتری</title>
-            {BASE_CSS}
-            <script>
-function saveCode(name) {{
-    const input = document.querySelector(`input[data-name="${{name}}"]`);
-    const code = input ? input.value : "";
-    if (!code) {{
-        alert("لطفا کد مشتری را وارد کنید");
-        return;
-    }}
-    const formData = new FormData();
-    formData.append('customer_name', name);
-    formData.append('customer_code', code);
-    fetch('/manual-map-save', {{
-        method: 'POST',
-        body: formData
-    }})
-    .then(response => response.json())
-    .then(data => {{
-        if(data.status === 'ok') {{
-            alert("کد با موفقیت ذخیره شد.");
-            // تغییر: هدایت به صفحه محاسبه برای اعمال تغییرات
-            window.location.href = "/calculate-commission";
-        }} else {{
-            alert("خطا: " + data.message);
-        }}
-    }});
-}}
-            </script>
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>رفع اشکال کدهای مشتری (پرداخت‌های یافت نشده)</h1>
-                <p>
-                    در لیست زیر، اسامی مشتریانی که در فایل پرداخت‌ها/چک‌ها وجود داشتند اما در دیتابیس مانده‌ها کدی برای آن‌ها یافت نشد، نمایش داده شده است.
-                    <br>
-                    با وارد کردن <b>کد مشتری صحیح</b> و کلیک روی ذخیره، این نام به دیتابیس مانده‌ها اضافه می‌شود و در محاسبات بعدی اعمال خواهد شد.
-                </p>
-                
-                <div class="table-wrapper">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>نام مشتری (از فایل پرداخت)</th>
-                                <th>نمونه مبلغ</th>
-                                <th>کد مشتری (اصلاح شده)</th>
-                                <th>عملیات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_html}
-                        </tbody>
-                    </table>
+    if not file_exists:
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>رفع اشکال کدهای مشتری</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>رفع اشکال کدهای مشتری</h1>
+                    <div class="message message-error">
+                        فایل اکسل <b>customer_codes_bind.xlsx</b> یافت نشد.
+                        <br>
+                        مسیر جاری: {current_dir}
+                        <br><br>
+                        لطفاً ابتدا به سربرگ <a href="/bind-codes" style="font-weight:bold; text-decoration:underline;">عطف کد به مشتری</a> بروید و فایل را تولید کنید.
+                    </div>
                 </div>
-                
-                <a class="footer-link" href="/calculate-commission">بازگشت به نتایج محاسبه</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    try:
+        df_bind = pd.read_excel(file_path)
+        # بررسی ستون‌ها
+        required_cols = ["CustomerName", "CustomerCode", "Status"]
+        missing_cols = [
+            col for col in required_cols if col not in df_bind.columns]
+        if missing_cols:
+            return HTMLResponse(content=f"<h1>خطا در ساختار فایل اکسل</h1><p>ستون‌های زیر یافت نشدند: {', '.join(missing_cols)}</p>")
+
+        # ---------------------------------------------------------
+        # خواندن لیست سیاه برای نمایش وضعیت دکمه‌ها
+        # ---------------------------------------------------------
+        blacklist_set = set()
+        blacklist_path = "blacklist.xlsx"
+        if os.path.exists(blacklist_path):
+            try:
+                df_black = pd.read_excel(blacklist_path)
+                if "CustomerName" in df_black.columns:
+                    blacklist_set = set(
+                        df_black["CustomerName"].apply(normalize_persian_name))
+            except Exception as e:
+                print(f"Error loading blacklist for UI: {e}")
+
+        # جدا کردن یافت شده و یافت نشده
+        unresolved_df = df_bind[df_bind["CustomerCode"] == "یافت نشد"].copy()
+        resolved_df = df_bind[df_bind["CustomerCode"] != "یافت نشد"].copy()
+
+        # ساخت HTML جدول برای موارد یافت نشده
+        unresolved_rows_html = ""
+        if not unresolved_df.empty:
+            for _, row in unresolved_df.iterrows():
+                name = row.get("CustomerName", "")
+                unresolved_rows_html += f"""
+                <tr class="unresolved-row">
+                    <td>
+                        <input type="text" name="fix_name" value="{name}" readonly style="border:none; background:transparent; width:100%;" />
+                    </td>
+                    <td>
+                        <input type="text" name="fix_code" placeholder="کد مشتری را وارد کنید" style="width: 100%;" />
+                    </td>
+                    <td>
+                        <button type="button" class="pill-button" style="padding:5px 10px;" onclick="removeAndBlacklistRow(this)">❌</button>
+                    </td>
+                </tr>
+                """
+        else:
+            unresolved_rows_html = "<tr><td colspan='3' style='text-align:center; color:green;'>همه کدها با موفقیت یافت شدند! ✅</td></tr>"
+
+        # ساخت HTML جدول برای موارد یافت شده (با تغییرات دکمه لیست سیاه)
+        resolved_rows_html = ""
+        if not resolved_df.empty:
+            for _, row in resolved_df.iterrows():
+                name = row.get("CustomerName", "")
+                code = row.get("CustomerCode", "")
+
+                # بررسی وضعیت لیست سیاه
+                norm_name = normalize_persian_name(name)
+                is_blacklisted = norm_name in blacklist_set
+
+                # تعیین دکمه مناسب بر اساس وضعیت لیست سیاه
+                if is_blacklisted:
+                    # اگر در لیست سیاه است: دکمه خروج از لیست سیاه
+                    blacklist_btn = f"""
+                    <button type="button" class="pill-button" style="background:#f59e0b; color:white; padding:5px 10px;" onclick="removeFromBlacklist('{name}')">خروج از لیست سیاه 🚫</button>
+                    """
+                    edit_delete_btn = ""  # دکمه‌های ویرایش/حذف را مخفی می‌کنیم یا می‌توانیم نگه داریم
+                else:
+                    # اگر در لیست سیاه نیست: دکمه افزودن به لیست سیاه
+                    blacklist_btn = f"""
+                    <button type="button" class="pill-button" style="background:Pink; color:Black; padding:5px 10px;" onclick="addToBlacklist('{name}')">افزودن به لیست سیاه 🚫</button>
+                    """
+                    edit_delete_btn = f"""
+                    <button type="button" class="pill-button" onclick="editResolvedRow(this)">ویرایش</button>
+                    <button type="button" class="pill-button" style="color:red;" onclick="deleteResolvedRow(this)">حذف</button>
+                    """
+
+                resolved_rows_html += f"""
+                <tr class="resolved-row">
+                    <td>{name}</td>
+                    <td style="color: green; font-weight: bold;">{code}</td>
+                    <td>
+                        {edit_delete_btn}
+                        {blacklist_btn}
+                    </td>
+                </tr>
+                """
+
+        debug_html = f"""
+        <div style="background:#f0fdf4; color:#166534; padding:10px; border:1px solid #bbf7d0; margin-bottom:20px; border-radius:5px; font-size:12px;">
+            <strong>وضعیت سیستم:</strong><br>
+            - تعداد کل ردیف‌ها: {len(df_bind)}<br>
+            - تعداد کدهای یافت نشده: {len(unresolved_df)}<br>
+            - تعداد کدهای یافت شده: {len(resolved_df)}
+        </div>
+        """
+
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>رفع اشکال کدهای مشتری</title>
+                {BASE_CSS}
+                <script>
+                function removeRow(btn) {{
+                    const row = btn.closest('tr');
+                    row.remove();
+                }}
+
+                function removeAndBlacklistRow(btn) {{
+                    const row = btn.closest('tr');
+                    const nameInput = row.querySelector('input[name="fix_name"]');
+                    const name = nameInput ? nameInput.value : "";
+                    if(confirm("آیا از صرف نظر از این کد اطمینان دارید؟")) {{
+                        fetch('/blacklist-item', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ "customer_name": name }})
+                        }})
+                        .then(response => response.json())
+                        .then(result => {{
+                            if (result.status === 'ok') {{
+                                row.remove();
+                                alert('نام مشتری به لیست سیاه اضافه و از لیست حذف شد.');
+                            }} else {{
+                                alert('خطا: ' + result.message);
+                            }}
+                        }})
+                        .catch(error => console.error('Error:', error));
+                    }}
+                }}
+
+                function addNewRow() {{
+                    const tbody = document.querySelector('#fix-form tbody');
+                    const newRow = document.createElement('tr');
+                    newRow.className = 'unresolved-row';
+                    newRow.innerHTML = `
+                        <td>
+                            <input type="text" name="fix_name" placeholder="نام مشتری جدید" style="width:100%;" />
+                        </td>
+                        <td>
+                            <input type="text" name="fix_code" placeholder="کد مشتری" style="width: 100%;" />
+                        </td>
+                        <td>
+                            <button type="button" class="pill-button" style="background:#ef4444; color:white; padding:5px 10px;" onclick="removeRow(this)">❌</button>
+                        </td>
+                    `;
+                    tbody.appendChild(newRow);
+                }}
+
+                // --- توابع بخش یافت شده ---
+                function editResolvedRow(btn) {{
+                    const row = btn.closest('tr');
+                    const nameCell = row.cells[0];
+                    const codeCell = row.cells[1];
+                    const currentName = nameCell.innerText;
+                    const currentCode = codeCell.innerText;
+                    const newName = prompt("ویرایش نام مشتری:", currentName);
+                    if (newName === null) return;
+                    const newCode = prompt("ویرایش کد مشتری:", currentCode);
+                    if (newCode === null) return;
+                    nameCell.innerText = newName;
+                    codeCell.innerText = newCode;
+                    saveResolvedEdit(currentName, newName, newCode);
+                }}
+
+                function deleteResolvedRow(btn) {{
+                    const row = btn.closest('tr');
+                    const nameCell = row.cells[0];
+                    const nameToDelete = nameCell.innerText;
+                    if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
+                        fetch('/delete-resolved-item', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ "customer_name": nameToDelete }})
+                        }})
+                        .then(response => response.json())
+                        .then(result => {{
+                            if (result.status === 'ok') {{
+                                row.remove();
+                                alert('مورد با موفقیت حذف شد.');
+                            }} else {{
+                                alert('خطا در حذف: ' + result.message);
+                            }}
+                        }})
+                        .catch(error => console.error('Error:', error));
+                    }}
+                }}
+
+                function saveResolvedEdit(oldName, newName, newCode) {{
+                    fetch('/edit-resolved-item', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            "old_name": oldName,
+                            "new_name": newName,
+                            "new_code": newCode
+                        }})
+                    }})
+                    .then(response => response.json())
+                    .then(result => {{
+                        if (result.status !== 'ok') {{
+                            alert('خطا در ذخیره ویرایش: ' + result.message);
+                            location.reload();
+                        }}
+                    }})
+                    .catch(error => {{
+                        console.error('Error:', error);
+                        alert('خطا در ارتباط با سرور');
+                        location.reload();
+                    }});
+                }}
+
+                // --- توابع جدید لیست سیاه برای موارد یافت شده ---
+                function addToBlacklist(name) {{
+                    if(confirm(`آیا می‌خواهید «${{name}}» را به لیست سیاه اضافه کنید؟`)) {{
+                        fetch('/blacklist-item', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ "customer_name": name }})
+                        }})
+                        .then(response => response.json())
+                        .then(result => {{
+                            if (result.status === 'ok') {{
+                                alert('نام مشتری به لیست سیاه اضافه شد.');
+                                location.reload(); // رفرش برای نمایش وضعیت جدید
+                            }} else {{
+                                alert('خطا: ' + result.message);
+                            }}
+                        }})
+                        .catch(error => console.error('Error:', error));
+                    }}
+                }}
+
+                function removeFromBlacklist(name) {{
+                    if(confirm(`آیا می‌خواهید «${{name}}» را از لیست سیاه خارج کنید؟`)) {{
+                        fetch('/unblacklist-item', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ "customer_name": name }})
+                        }})
+                        .then(response => response.json())
+                        .then(result => {{
+                            if (result.status === 'ok') {{
+                                alert('نام مشتری از لیست سیاه حذف شد.');
+                                location.reload(); // رفرش برای نمایش وضعیت جدید
+                            }} else {{
+                                alert('خطا: ' + result.message);
+                            }}
+                        }})
+                        .catch(error => console.error('Error:', error));
+                    }}
+                }}
+                // ---------------------------------------
+
+                function submitFixes() {{
+                    const form = document.getElementById('fix-form');
+                    const formData = new FormData(form);
+                    const data = [];
+                    const names = formData.getAll('fix_name');
+                    const codes = formData.getAll('fix_code');
+                    for (let i = 0; i < names.length; i++) {{
+                        const name = names[i].trim();
+                        const code = codes[i].trim();
+                        if (name && code) {{
+                            data.push({{
+                                "CustomerName": name,
+                                "CustomerCode": code
+                            }});
+                        }}
+                    }}
+                    if (data.length === 0) {{
+                        alert("هیچ کدی برای ذخیره وارد نشده است.");
+                        return;
+                    }}
+                    fetch('/manual-map-save', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(data)
+                    }})
+                    .then(response => response.json())
+                    .then(result => {{
+                        if (result.status === 'ok') {{
+                            alert('کدها با موفقیت ذخیره شدند و فایل اکسل بروزرسانی شد.');
+                            location.reload();
+                        }} else {{
+                            alert('خطا در ذخیره: ' + result.message);
+                        }}
+                    }})
+                    .catch(error => {{
+                        console.error('Error:', error);
+                        alert('خطا در ارتباط با سرور');
+                    }});
+                }}
+                </script>
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>رفع اشکال کدهای مشتری</h1>
+                    {debug_html}
+                    <div style="margin-bottom: 15px;">
+                        <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن سطر جدید</button>
+                    </div>
+                    <h2>🔴 لیست مشتریانی که کدشان یافت نشد</h2>
+                    <p>لطفاً کد مشتری صحیح را در کادر روبروی نام وارد کنید.</p>
+                    <form id="fix-form">
+                        <div class="table-wrapper">
+                            <table class="data-table table-unresolved">
+                                <thead>
+                                    <tr>
+                                        <th>نام مشتری</th>
+                                        <th>کد مشتری (اصلاح شده)</th>
+                                        <th>عملیات</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {unresolved_rows_html}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="margin-top: 20px;">
+                            <button type="button" class="pill-button" onclick="submitFixes()" style="background-color: #10b981; color: white;">💾 ذخیره تغییرات</button>
+                        </div>
+                    </form>
+                    <hr/>
+                    <h2>🟢 لیست مشتریانی که کدشان یافت شد</h2>
+                    <div class="table-wrapper">
+                        <table class="data-table table-resolved">
+                            <thead>
+                                <tr>
+                                    <th>نام مشتری</th>
+                                    <th>کد مشتری</th>
+                                    <th>عملیات</th>
+                                </thead>
+                            <tbody>
+                                {resolved_rows_html}
+                            </tbody>
+                        </table>
+                    </div>
+                    <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        print(f"DEBUG ERROR: {e}")
+        return HTMLResponse(content=f"<h1>خطا در خواندن فایل اکسل</h1><p>{str(e)}</p>")
 
 
 @app.post("/manual-map-save")
 async def manual_map_save(request: Request):
-    form = await request.form()
-    name = form.get("customer_name")
-    code = form.get("customer_code")
+    try:
+        # دریافت لیست داده‌ها از بدنه درخواست (JSON)
+        body = await request.json()
+        # لیستی از دیکشنری‌ها: [{"CustomerName": "...", "CustomerCode": "...", "TotalAmount": ...}, ...]
+        new_mappings = body
 
-    if not name or not code:
-        return JSONResponse(content={"status": "error", "message": "نام یا کد ارسال نشده است"})
+        file_path = "customer_codes_bind.xlsx"
 
-    # استفاده از تابع جدیدی که در services ساخته‌ایم
-    success = add_customer_mapping(name, code)
+        # ۱. خواندن فایل اکسل موجود
+        if os.path.exists(file_path):
+            df_existing = pd.read_excel(file_path)
+        else:
+            df_existing = pd.DataFrame(
+                columns=["CustomerName", "CustomerCode", "TotalAmount", "Status"])
 
-    if success:
-        return JSONResponse(content={"status": "ok"})
-    else:
-        return JSONResponse(content={"status": "error", "message": "خطا در ذخیره اطلاعات"})
+        # ۲. تبدیل داده‌های جدید به دیتافریم
+        df_new = pd.DataFrame(new_mappings)
+
+        # اضافه کردن ستون وضعیت برای موارد جدید
+        df_new["Status"] = "کد یافت شد (دستی)"
+
+        # ۳. حذف ردیف‌های قدیمی که نام مشتری‌شان در لیست جدید وجود دارد (برای جایگزینی)
+        # نکته: ما بر اساس نام مشتری تطبیق می‌دهیم و ردیف قدیمی را حذف می‌کنیم
+        if not df_existing.empty and "CustomerName" in df_existing.columns:
+            df_existing = df_existing[~df_existing["CustomerName"].isin(
+                df_new["CustomerName"])]
+
+        # ۴. ادغام دیتافریم قدیمی و جدید
+        df_final = pd.concat([df_existing, df_new], ignore_index=True)
+
+        # ۵. ذخیره در فایل اکسل
+        df_final.to_excel(file_path, index=False)
+
+        return JSONResponse(content={"status": "ok", "message": "فایل با موفقیت بروزرسانی شد."})
+
+    except Exception as e:
+        print(f"Error saving map: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/edit-resolved-item")
+async def edit_resolved_item(request: Request):
+    """
+    ویرایش یک مشتری در لیست کدهای یافت شده (فایل customer_codes_bind.xlsx).
+    """
+    try:
+        body = await request.json()
+        old_name = body.get("old_name")
+        new_name = body.get("new_name")
+        new_code = body.get("new_code")
+
+        if not old_name or not new_name or not new_code:
+            return JSONResponse(content={"status": "error", "message": "اطلاعات ناقص است"}, status_code=400)
+
+        file_path = "customer_codes_bind.xlsx"
+
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path)
+
+            # پیدا کردن و ویرایش ردیف
+            # فرض بر این است که old_name منحصر به فرد است یا اولین مورد را ویرایش می‌کنیم
+            mask = (df["CustomerName"] == old_name)
+
+            if not mask.any():
+                return JSONResponse(content={"status": "error", "message": "مشتری یافت نشد"}, status_code=404)
+
+            # به‌روزرسانی نام و کد
+            df.loc[mask, "CustomerName"] = new_name
+            df.loc[mask, "CustomerCode"] = new_code
+            df.loc[mask, "Status"] = "کد یافت شد (ویرایش شده)"
+
+            df.to_excel(file_path, index=False)
+            return JSONResponse(content={"status": "ok"})
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل اکسل یافت نشد"}, status_code=404)
+
+    except Exception as e:
+        print(f"Error editing resolved item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/delete-resolved-item")
+async def delete_resolved_item(request: Request):
+    """
+    حذف یک مشتری از لیست کدهای یافت شده (فایل customer_codes_bind.xlsx).
+    """
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+
+        if not customer_name:
+            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
+
+        file_path = "customer_codes_bind.xlsx"
+
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path)
+
+            # فیلتر کردن برای حذف ردیف مورد نظر
+            initial_len = len(df)
+            df = df[df["CustomerName"] != customer_name]
+
+            if len(df) == initial_len:
+                return JSONResponse(content={"status": "error", "message": "مشتری یافت نشد"}, status_code=404)
+
+            df.to_excel(file_path, index=False)
+            return JSONResponse(content={"status": "ok"})
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل اکسل یافت نشد"}, status_code=404)
+
+    except Exception as e:
+        print(f"Error deleting resolved item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
 
 @app.post("/group-items-save", response_class=HTMLResponse)
@@ -3549,71 +4069,263 @@ async def group_items_save(request: Request):
 
 # ------------------ UI: دانلود مستقیم اکسل کدها ------------------
 
+# ------------------ UI: سربرگ جدید - عطف کد به مشتری ------------------
 
-@app.get("/direct-download-codes", response_class=HTMLResponse)
-async def direct_download_page(request: Request):
+
+@app.get("/bind-codes", response_class=HTMLResponse)
+async def bind_codes_page(request: Request):
     """
-    صفحه ساده‌ای که فقط شامل یک فرم برای آپلود پرداخت‌ها و دانلود مستقیم اکسل کدهاست.
+    صفحه جدید برای عطف کد به مشتری (با ساختار استاندارد سایت).
     """
-    nav_html = build_nav("main")
+    nav_html = build_nav("bind")
+
     html = f"""
     <html>
         <head>
             <meta charset="utf-8" />
-            <title>دانلود مستقیم اکسل کدها</title>
+            <title>عطف کد به مشتری</title>
             {BASE_CSS}
-            <style>
-                .simple-container {{
-                    max-width: 500px;
-                    margin: 50px auto;
-                    text-align: center;
-                    background: #f9fafb;
-                    padding: 30px;
-                    border-radius: 10px;
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                }}
-                .big-button {{
-                    background-color: #2563eb;
-                    color: white;
-                    padding: 15px 30px;
-                    font-size: 16px;
-                    border: none;
-                    border-radius: 5px;
-                    cursor: pointer;
-                    margin-top: 20px;
-                    width: 100%;
-                }}
-                .big-button:hover {{
-                    background-color: #1d4ed8;
-                }}
-            </style>
         </head>
         <body>
-            <div class="simple-container">
-                <h2>📥 ساخت اکسل کدهای مشتری</h2>
-                <p>فایل پرداخت‌ها را انتخاب کنید تا سیستم کدها را استخراج کرده و فایل اکسل را به شما بدهد.</p>
-                
-                <form action="/process-direct-download" method="post" enctype="multipart/form-data">
-                    <div style="margin-bottom: 15px; text-align: right;">
-                        <label>فایل پرداخت‌ها (Payments):</label><br />
-                        <input type="file" name="payments_file" accept=".xlsx,.xls" required style="width: 100%; margin-top: 5px;" />
-                    </div>
-                    
-                    <div style="margin-bottom: 15px; text-align: right;">
-                        <label>فایل چک‌ها (Checks) - اختیاری:</label><br />
-                        <input type="file" name="checks_file" accept=".xlsx,.xls" style="width: 100%; margin-top: 5px;" />
-                    </div>
-
-                    <button type="submit" class="big-button">پردازش و دانلود فایل اکسل</button>
-                </form>
-                
-                <a href="/" style="display:block; margin-top:20px; color:#6b7280; text-decoration:none;">بازگشت به صفحه اصلی</a>
+            <div class="container">
+                {nav_html}
+                <h1>عطف کد به مشتری</h1>
+                <div class="upload-card">
+                    <div class="upload-card-title">بارگذاری فایل‌های پرداخت و چک</div>
+                    <p>
+                        در این بخش فایل‌های پرداخت و چک را آپلود کنید تا سیستم کدهای مشتری را استخراج کرده و 
+                        فایل اکسل مربوطه را برای شما تولید کند.
+                    </p>
+                    <form action="/process-bind-codes" method="post" enctype="multipart/form-data">
+                        <div class="form-row">
+                            <label>فایل پرداخت‌ها (Payments):</label><br />
+                            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
+                        </div>
+                        <div class="form-row">
+                            <label>فایل چک‌ها (Checks) - اختیاری:</label><br />
+                            <input type="file" name="checks_file" accept=".xlsx,.xls" />
+                        </div>
+                        <button type="submit">پردازش و دانلود فایل اکسل</button>
+                    </form>
+                </div>
+                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
             </div>
         </body>
     </html>
     """
     return HTMLResponse(content=html)
 
+
+@app.post("/process-bind-codes", response_class=HTMLResponse)
+async def process_bind_codes(
+    payments_file: UploadFile = File(...),
+    checks_file: UploadFile | None = File(None)
+):
+    """
+    پردازش فایل‌ها برای عطف کد به مشتری و به‌روزرسانی فایل اکسل (بدون حذف کدهای قبلی).
+    """
+    nav_html = build_nav("bind")
+    try:
+        # 1. بارگذاری فایل‌ها
+        df_pay = load_payments_excel(payments_file.file)
+        df_chk = pd.DataFrame()
+        if checks_file and checks_file.filename:
+            df_chk = load_checks_excel(checks_file.file)
+
+        # ---------------------------------------------------------
+        # تغییر جدید: خواندن لیست سیاه برای حذف کامل از خروجی
+        # ---------------------------------------------------------
+        blacklist_set = set()
+        blacklist_path = "blacklist.xlsx"
+        if os.path.exists(blacklist_path):
+            try:
+                df_black = pd.read_excel(blacklist_path)
+                if "CustomerName" in df_black.columns:
+                    # نرمال‌سازی نام‌های لیست سیاه برای مقایسه دقیق
+                    blacklist_set = set(
+                        df_black["CustomerName"].apply(normalize_persian_name))
+            except Exception as e:
+                print(f"Error loading blacklist: {e}")
+
+        # 2. ساخت مپ نام به کد (با اعمال لیست سیاه در مرحله تطبیق)
+        name_code_map_from_balances = build_name_code_map_from_balances()
+
+        # 3. آماده‌سازی پرداخت‌ها
+        payments_df, unresolved_items = prepare_payments(
+            df_pay, df_chk, pd.DataFrame()
+        )
+
+        # ---------------------------------------------------------
+        # تغییر مهم: فیلتر کردن نام‌های لیست سیاه از نتایج
+        # ---------------------------------------------------------
+        # ابتدا مواردی که کد پیدا شده را فیلتر می‌کنیم
+        resolved_df = payments_df[payments_df["ResolvedCustomer"].notna()].copy(
+        )
+        resolved_df = resolved_df[resolved_df["ResolvedCustomer"]
+                                  != "یافت نشد"]
+
+        # حذف نام‌های سیاه از لیست کدهای یافت شده
+        if not resolved_df.empty:
+            resolved_df = resolved_df[
+                ~resolved_df["CustomerName"].apply(
+                    lambda x: normalize_persian_name(x) in blacklist_set)
+            ]
+
+        # سپس مواردی که کد پیدا نشد (unresolved) را فیلتر می‌کنیم
+        # این بخش باعث می‌شود نام‌های سیاه اصلاً به عنوان "یافت نشد" هم ثبت نشوند
+        if unresolved_items:
+            unresolved_df = pd.DataFrame(unresolved_items)
+            # حذف نام‌های سیاه از لیست یافت نشده‌ها
+            unresolved_df = unresolved_df[
+                ~unresolved_df["Name"].apply(
+                    lambda x: normalize_persian_name(x) in blacklist_set)
+            ]
+        else:
+            unresolved_df = pd.DataFrame()
+
+        # 4. ساخت دیتافریم نتیجه برای این دور پردازش
+        current_result_data = []
+
+        # مواردی که کد پیدا شد (پس از فیلتر لیست سیاه)
+        if not resolved_df.empty:
+            grouped = resolved_df.groupby("ResolvedCustomer").agg({
+                "CustomerName": "first",
+                "Amount": "sum"
+            }).reset_index()
+            for _, row in grouped.iterrows():
+                current_result_data.append({
+                    "CustomerName": row["CustomerName"],
+                    "TotalAmount": row["Amount"],
+                    "CustomerCode": row["ResolvedCustomer"],
+                    "Status": "کد یافت شد"
+                })
+
+        # مواردی که کد پیدا نشد (پس از فیلتر لیست سیاه)
+        if not unresolved_df.empty:
+            grouped_unresolved = unresolved_df.groupby("Name").agg({
+                "Amount": "sum"
+            }).reset_index()
+            for _, row in grouped_unresolved.iterrows():
+                current_result_data.append({
+                    "CustomerName": row["Name"],
+                    "TotalAmount": row["Amount"],
+                    "CustomerCode": "یافت نشد",
+                    "Status": "کد یافت نشد"
+                })
+
+        df_current = pd.DataFrame(current_result_data)
+
+        # ---------------------------------------------------------
+        # 5. منطق ادغام با فایل قبلی (Merge Logic)
+        # ---------------------------------------------------------
+        output_filename = "customer_codes_bind.xlsx"
+        df_existing = pd.DataFrame()
+        if os.path.exists(output_filename):
+            df_existing = pd.read_excel(output_filename)
+
+        # لیست‌ها برای گزارش
+        newly_added = []
+        updated_codes = []
+
+        if not df_current.empty:
+            for _, row in df_current.iterrows():
+                name = row["CustomerName"]
+                new_code = row["CustomerCode"]
+
+                # جستجو در فایل موجود
+                if not df_existing.empty:
+                    existing_row = df_existing[df_existing["CustomerName"] == name]
+                else:
+                    existing_row = pd.DataFrame()
+
+                if existing_row.empty:
+                    # مورد جدید: اضافه کن
+                    newly_added.append(name)
+                    # استفاده از concat برای اضافه کردن
+                    df_existing = pd.concat(
+                        [df_existing, pd.DataFrame([row])], ignore_index=True)
+                else:
+                    # مورد قبلی وجود دارد
+                    old_code = existing_row.iloc[0]["CustomerCode"]
+                    # اگر کد قبلی "یافت نشد" بود و الان کد پیدا شده -> آپدیت کن
+                    if old_code == "یافت نشد" and new_code != "یافت نشد":
+                        updated_codes.append(
+                            f"{name} (کد قبلی: یافت نشد -> کد جدید: {new_code})")
+                        df_existing.loc[df_existing["CustomerName"]
+                                        == name, "CustomerCode"] = new_code
+                        df_existing.loc[df_existing["CustomerName"]
+                                        == name, "Status"] = "کد یافت شد (بروزرسانی)"
+                    # اگر کد قبلی معتبر بود و الان کد جدیدی پیدا شده (متفاوت) -> آپدیت کن
+                    elif old_code != "یافت نشد" and new_code != "یافت نشد" and old_code != new_code:
+                        updated_codes.append(
+                            f"{name} (کد قبلی: {old_code} -> کد جدید: {new_code})")
+                        df_existing.loc[df_existing["CustomerName"]
+                                        == name, "CustomerCode"] = new_code
+                        df_existing.loc[df_existing["CustomerName"]
+                                        == name, "Status"] = "کد تغییر یافت"
+
+        # ذخیره فایل نهایی
+        df_existing.to_excel(output_filename, index=False)
+
+        # ---------------------------------------------------------
+        # 6. ساخت HTML گزارش
+        # ---------------------------------------------------------
+        report_html = ""
+        if newly_added:
+            report_html += f"<p style='color:green;'>✅ <b>{len(newly_added)} مشتری جدید اضافه شدند.</b></p>"
+        if updated_codes:
+            report_html += f"<p style='color:blue;'>🔄 <b>{len(updated_codes)} مشتری بروزرسانی شدند:</b></p><ul>"
+            for item in updated_codes:
+                report_html += f"<li>{item}</li>"
+            report_html += "</ul>"
+        if not newly_added and not updated_codes:
+            report_html = "<p style='color:gray;'>تغییری در لیست کدها ایجاد نشد (همه موارد تکراری یا بدون کد بودند).</p>"
+
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>عطف کد به مشتری - نتیجه</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>عملیات عطف کد به مشتری انجام شد ✅</h1>
+                    <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; border: 1px solid #10b981; margin-bottom: 20px;">
+                        <h3>گزارش تغییرات</h3>
+                        {report_html}
+                        <div style="margin-top:15px;">
+                            <a href="/download-bind-file" class="pill-button" style="background-color: #059669; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block;">
+                                📥 دانلود فایل به‌روزرسانی شده
+                            </a>
+                        </div>
+                    </div>
+                    <a href="/bind-codes">بازگشت و پردازش فایل جدید</a>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        print(f"Error in bind codes: {e}")
+        return HTMLResponse(content=f"<h1>خطا در پردازش: {str(e)}</h1>", status_code=500)
+
+
+@app.get("/download-bind-file")
+async def download_bind_file():
+    """
+    دانلود فایل تولید شده در مرحله عطف کد به مشتری.
+    """
+    output_filename = "customer_codes_bind.xlsx"
+    if not os.path.exists(output_filename):
+        return HTMLResponse(content="<h1>فایل یافت نشد. لطفاً ابتدا فایل را بسازید.</h1>")
+    return FileResponse(
+        output_filename,
+        media_type="application/vnd.openpxmlformats-officedocument.spreadsheetml.sheet",
+        filename=output_filename
+    )
 
 # نام فایل خروجی
 OUTPUT_CODES_FILENAME = "customer_codes_generated.xlsx"
@@ -3732,3 +4444,317 @@ async def download_generated_file():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=OUTPUT_CODES_FILENAME
     )
+
+
+@app.post("/blacklist-item")
+async def blacklist_item(request: Request):
+    """
+    حذف مشتری از لیست اصلی و افزودن آن به لیست سیاه (blacklist.xlsx).
+    """
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+
+        if not customer_name:
+            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
+
+        bind_file_path = "customer_codes_bind.xlsx"
+        blacklist_file_path = "blacklist.xlsx"
+
+        # ۱. حذف از فایل اصلی
+        if os.path.exists(bind_file_path):
+            df_bind = pd.read_excel(bind_file_path)
+            initial_len = len(df_bind)
+            # حذف ردیف‌هایی که نام مشتری با نام ارسالی برابر است
+            df_bind = df_bind[df_bind["CustomerName"] != customer_name]
+
+            if len(df_bind) < initial_len:
+                df_bind.to_excel(bind_file_path, index=False)
+            else:
+                return JSONResponse(content={"status": "error", "message": "مشتری در لیست اصلی یافت نشد"}, status_code=404)
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل لیست اصلی یافت نشد"}, status_code=404)
+
+        # ۲. افزودن به لیست سیاه
+        # خواندن لیست سیاه موجود (اگر وجود ندارد، دیتافریم جدید می‌سازیم)
+        if os.path.exists(blacklist_file_path):
+            df_black = pd.read_excel(blacklist_file_path)
+        else:
+            df_black = pd.DataFrame(columns=["CustomerName", "DateAdded"])
+
+        # بررسی تکراری نبودن
+        if not df_black.empty and "CustomerName" in df_black.columns:
+            if customer_name in df_black["CustomerName"].values:
+                return JSONResponse(content={"status": "ok", "message": "قبلاً در لیست سیاه وجود داشت."})
+
+        # افزودن ردیف جدید
+        new_row = pd.DataFrame([{
+            "CustomerName": customer_name,
+            "DateAdded": pd.Timestamp.now()
+        }])
+        df_black = pd.concat([df_black, new_row], ignore_index=True)
+        df_black.to_excel(blacklist_file_path, index=False)
+
+        return JSONResponse(content={"status": "ok", "message": "با موفقیت به لیست سیاه منتقل شد."})
+
+    except Exception as e:
+        print(f"Error blacklisting item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/unblacklist-item")
+async def unblacklist_item(request: Request):
+    """
+    حذف مشتری از لیست سیاه (blacklist.xlsx).
+    """
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+        if not customer_name:
+            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
+
+        blacklist_file_path = "blacklist.xlsx"
+
+        if os.path.exists(blacklist_file_path):
+            df_black = pd.read_excel(blacklist_file_path)
+            initial_len = len(df_black)
+
+            # نرمال‌سازی نام برای مقایسه دقیق
+            norm_target = normalize_persian_name(customer_name)
+
+            # فرض بر این است که ستون CustomerName در لیست سیاه هم نرمال نیست یا باید چک شود
+            # اما برای سادگی و اطمینان، هر دو طرف را نرمال می‌کنیم
+            if "CustomerName" in df_black.columns:
+                df_black["Normalized"] = df_black["CustomerName"].apply(
+                    normalize_persian_name)
+                df_black = df_black[df_black["Normalized"] != norm_target]
+                df_black = df_black.drop(
+                    columns=["Normalized"])  # حذف ستون کمکی
+
+            if len(df_black) < initial_len:
+                df_black.to_excel(blacklist_file_path, index=False)
+                return JSONResponse(content={"status": "ok", "message": "با موفقیت از لیست سیاه حذف شد."})
+            else:
+                return JSONResponse(content={"status": "error", "message": "مشتری در لیست سیاه یافت نشد"}, status_code=404)
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل لیست سیاه یافت نشد"}, status_code=404)
+
+    except Exception as e:
+        print(f"Error unblacklisting item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+# ------------------ UI: دیباگ اتصال چک‌ها ------------------
+
+
+@app.get("/debug-checks-link", response_class=HTMLResponse)
+async def debug_checks_link_page(request: Request):
+    nav_html = build_nav("main")  # یا می‌توانید یک تب جدید اضافه کنید
+    html = f"""
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <title>دیباگ اتصال چک‌ها</title>
+            {BASE_CSS}
+            <script>
+                function showLoading() {{
+                    document.getElementById('loading-msg').style.display = 'block';
+                    document.getElementById('result-area').style.display = 'none';
+                }}
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                {nav_html}
+                <h1>بررسی اتصال چک‌ها به پرداخت‌ها</h1>
+                <p>
+                    در این صفحه می‌توانید ببینید که سیستم چگونه شماره چک‌ها را از فایل پرداخت استخراج کرده و با فایل چک‌ها تطبیق می‌دهد.
+                </p>
+                <div class="upload-card">
+                    <form action="/process-debug-checks" method="post" enctype="multipart/form-data" onsubmit="showLoading()">
+                        <div class="form-row">
+                            <label>فایل پرداخت‌ها (Payments):</label><br />
+                            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
+                        </div>
+                        <div class="form-row">
+                            <label>فایل چک‌ها (Checks):</label><br />
+                            <input type="file" name="checks_file" accept=".xlsx,.xls" required />
+                        </div>
+                        <button type="submit">بررسی و نمایش نتایج</button>
+                    </form>
+                </div>
+                <div id="loading-msg" style="display:none; text-align:center; margin-top:20px; color:blue;">
+                    در حال پردازش فایل‌ها...
+                </div>
+                <div id="result-area" style="margin-top: 30px;">
+                    <!-- نتایج اینجا نمایش داده می‌شود -->
+                </div>
+                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/process-debug-checks", response_class=HTMLResponse)
+async def process_debug_checks(
+    request: Request,
+    payments_file: UploadFile = File(...),
+    checks_file: UploadFile = File(...)
+):
+    nav_html = build_nav("main")
+    try:
+        # 1. بارگذاری فایل‌ها
+        df_pay = load_payments_excel(payments_file.file)
+        df_chk = load_checks_excel(checks_file.file)
+
+        # ---------------------------------------------------------
+        # تغییر جدید: خواندن فایل customer_codes_bind.xlsx برای مپ نام به کد
+        # ---------------------------------------------------------
+        bind_map = {}
+        bind_file_path = "customer_codes_bind.xlsx"
+        if os.path.exists(bind_file_path):
+            try:
+                df_bind = pd.read_excel(bind_file_path)
+                # فقط ردیف‌هایی که کد دارند و "یافت نشد" نیستند
+                df_bind_valid = df_bind[df_bind["CustomerCode"] != "یافت نشد"]
+                if not df_bind_valid.empty and "CustomerName" in df_bind_valid.columns:
+                    # ساخت دیکشنری نرمال‌سازی شده نام -> کد
+                    for _, row in df_bind_valid.iterrows():
+                        name = str(row["CustomerName"])
+                        # استفاده از تابع نرمال‌سازی موجود
+                        key = name_key_for_matching(name)
+                        code = str(row["CustomerCode"])
+                        if key and code:
+                            bind_map[key] = code
+            except Exception as e:
+                print(f"Error loading bind file for debug: {e}")
+
+        # 2. فیلتر کردن فقط پرداخت‌های چکی
+        if "SourceType" in df_pay.columns:
+            df_checks_only = df_pay[df_pay["SourceType"] == "Check"].copy()
+        else:
+            df_checks_only = df_pay.copy()
+
+        if df_checks_only.empty:
+            return HTMLResponse(content="<h1>هیچ ردیف چکی در فایل پرداخت یافت نشد.</h1><a href='/debug-checks-link'>بازگشت</a>")
+
+        # 3. آماده‌سازی دیتافریم چک‌ها برای جستجوی سریع
+        chk_nums = None
+        if "CheckNumber" in df_chk.columns:
+            chk_nums = (
+                df_chk["CheckNumber"]
+                .astype(str)
+                .str.replace(r"\D", "", regex=True)
+                .str.lstrip("0")
+            )
+
+        results = []
+
+        # 4. حلقه روی هر پرداخت چکی و تلاش برای تطبیق
+        for _, row in df_checks_only.iterrows():
+            pay_desc = str(row.get("Description", ""))
+            pay_check_col = str(row.get("CheckNumber", ""))
+
+            # استخراج شماره چک از پرداخت
+            candidates = []
+            if pay_check_col and pay_check_col != "nan":
+                candidates.append(pay_check_col)
+
+            import re
+            m = re.search(r"(\d{3,10})", pay_desc)
+            if m:
+                candidates.append(m.group(1))
+
+            found_match = False
+            matched_check_info = {}
+
+            for cand in candidates:
+                num = re.sub(r"\D", "", str(cand)).lstrip("0")
+                if not num:
+                    continue
+
+                if chk_nums is not None:
+                    matches = df_chk.loc[chk_nums == num]
+                else:
+                    matches = pd.DataFrame()
+
+                if not matches.empty:
+                    found_match = True
+                    chk_row = matches.iloc[0]
+                    chk_name = str(chk_row.get("CustomerName", ""))
+                    chk_code_from_file = str(chk_row.get("CustomerCode", ""))
+
+                    # ---------------------------------------------------------
+                    # منطق جدید: تلاش برای پیدا کردن کد از فایل bind
+                    # ---------------------------------------------------------
+                    final_code = chk_code_from_file  # پیش‌فرض کد خود فایل چک
+
+                    # اگر کد در فایل چک خالی بود یا نام داشت، تلاش می‌کنیم از bind بخوانیم
+                    if (not chk_code_from_file or chk_code_from_file == "nan") and chk_name:
+                        key = name_key_for_matching(chk_name)
+                        if key in bind_map:
+                            final_code = bind_map[key]
+
+                    matched_check_info = {
+                        "FoundCheckNumber": chk_row.get("CheckNumber", ""),
+                        "FoundCustomerName": chk_name,
+                        "OriginalCheckCode": chk_code_from_file,  # کدی که خود فایل چک داشته
+                        # کدی که از bind پیدا شد (یا همان قبلی)
+                        "FinalCode": final_code
+                    }
+                    break
+
+            results.append({
+                "PayDate": row.get("PaymentDate", ""),
+                "PayDesc": pay_desc,
+                "PayCheckCol": pay_check_col,
+                "ExtractedNum": matched_check_info.get("FoundCheckNumber", "") if found_match else "یافت نشد",
+                "MatchStatus": "✅ تطبیق یافت شد" if found_match else "❌ تطبیق یافت نشد",
+                "CheckCustomerName": matched_check_info.get("FoundCustomerName", "") if found_match else "-",
+                "OriginalCheckCode": matched_check_info.get("OriginalCheckCode", "") if found_match else "-",
+                "FinalCode": matched_check_info.get("FinalCode", "") if found_match else "-",
+            })
+
+        df_result = pd.DataFrame(results)
+
+        # ساخت HTML جدول
+        if not df_result.empty:
+            table_html = df_result.to_html(
+                index=False, border=0, classes="data-table")
+        else:
+            table_html = "<p>داده‌ای برای نمایش وجود ندارد.</p>"
+
+        html = f"""
+        <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>نتایج دیباگ چک‌ها</title>
+                {BASE_CSS}
+            </head>
+            <body>
+                <div class="container">
+                    {nav_html}
+                    <h1>نتایج بررسی اتصال چک‌ها</h1>
+                    <p>
+                        در جدول زیر، وضعیت تلاش برای پیدا کردن اطلاعات چک نمایش داده شده است.
+                        <br>
+                        <b>ستون OriginalCheckCode:</b> کدی که مستقیماً از فایل چک‌ها خوانده شده است.
+                        <br>
+                        <b>ستون FinalCode:</b> کدی که با تطبیق نام در فایل customer_codes_bind.xlsx به دست آمده است.
+                    </p>
+                    <div class="table-wrapper">
+                        {table_html}
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <a href="/debug-checks-link">آپلود فایل‌های جدید</a>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        print(f"Error in debug checks: {e}")
+        return HTMLResponse(content=f"<h1>خطا در پردازش: {str(e)}</h1>", status_code=500)
