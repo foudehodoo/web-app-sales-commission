@@ -16,7 +16,6 @@ from app.services.customer_balances import (
     load_balances_from_db,
     update_balances,
     normalize_name as normalize_balance_name,
-    add_customer_mapping  # <--- این خط را اضافه کنید
 )
 
 from datetime import datetime
@@ -1624,23 +1623,27 @@ def compute_commissions(
     checks_raw: pd.DataFrame,
     group_config: dict,
     group_col: str,
-    reactivation_days: int = 90,
+    reactivation_days: int = 90
 ):
+    """
+    هسته‌ی محاسبات:
+    - آماده‌سازی فروش‌ها و پرداخت‌ها
+    - تسویه فاکتورها طبق اولویت (نقدی → عادی، قدیمی → جدید)
+    - محاسبه پورسانت
+    """
     sales_df = prepare_sales(sales_raw, group_config, group_col)
+
     checks_df = (
         checks_raw.copy()
         if checks_raw is not None and not checks_raw.empty
         else pd.DataFrame()
     )
 
-    # تغییر: دریافت خروجی جدید شامل موارد یافت نشده
-    payments_df, unresolved_payments = prepare_payments(
-        payments_raw, checks_df, sales_df)
-
-    # ذخیره موارد یافت نشده در متغیر سراسری برای استفاده در UI
-    LAST_UPLOAD["unresolved_payments"] = unresolved_payments
-
-    # ... (بقیه کدهای محاسباتی بدون تغییر) ...
+    # ---------------------------------------------------------
+    # اصلاحیه: دریافت خروجی صحیح از prepare_payments
+    # این تابع یک تاپل برمی‌گرداند: (payments_df, unresolved_items)
+    # ---------------------------------------------------------
+    payments_df, _ = prepare_payments(payments_raw, checks_df, sales_df)
 
     # اگر پرداختی نداریم
     if payments_df.empty:
@@ -1656,8 +1659,49 @@ def compute_commissions(
 
     # تسویه بر اساس CustomerKey استاندارد
     for cust_key, pay_group in payments_df.groupby("ResolvedCustomerKey"):
-        # ... (بقیه منطق تسویه بدون تغییر) ...
-        pass  # منطق تسویه همان است
+        if cust_key is None or (isinstance(cust_key, float) and pd.isna(cust_key)):
+            continue
+        if str(cust_key).strip() == "":
+            continue
+
+        cust_invoice_idx = sales_df.index[sales_df["CustomerKey"] == cust_key]
+        if len(cust_invoice_idx) == 0:
+            continue
+
+        cust_invoice_idx = (
+            sales_df.loc[cust_invoice_idx]
+            .sort_values(["PriorityRank", "InvoiceDate"])
+            .index
+        )
+
+        if "PaymentDate" in pay_group.columns:
+            pay_group = pay_group.sort_values("PaymentDate")
+
+        for _, p in pay_group.iterrows():
+            remaining_payment = p["Amount"]
+            pay_date = p.get("PaymentDate", None)
+
+            for idx in cust_invoice_idx:
+                if remaining_payment <= 0:
+                    break
+
+                remaining_invoice = sales_df.at[idx, "Remaining"]
+                if remaining_invoice <= 0:
+                    continue
+
+                allocate = min(remaining_payment, remaining_invoice)
+
+                in_due = True
+                if isinstance(pay_date, (pd.Timestamp, datetime)):
+                    in_due = bool(pay_date <= sales_df.at[idx, "DueDate"])
+
+                if in_due:
+                    percent = sales_df.at[idx, "CommissionPercent"]
+                    sales_df.at[idx, "CommissionAmount"] += allocate * percent
+
+                sales_df.at[idx, "PaidAmount"] += allocate
+                sales_df.at[idx, "Remaining"] -= allocate
+                remaining_payment -= allocate
 
     salesperson_df = (
         sales_df.groupby("Salesperson", dropna=False)["CommissionAmount"]
@@ -1667,6 +1711,7 @@ def compute_commissions(
     salesperson_df.rename(
         columns={"CommissionAmount": "TotalCommission"}, inplace=True
     )
+
     return sales_df, salesperson_df, payments_df
 
 
@@ -2467,6 +2512,14 @@ async def upload_all(
                             اعمال مانده‌های حساب مشتریان به محاسبات (کسر از پورسانت/اضافه به طلب)
                         </label>
                     </div>
+                    <!-- در داخل تگ <form> در فایل index.html -->
+                    <div class="form-row">
+                        <label>
+                            <input type="checkbox" name="use_chart" value="1" />
+                            استفاده از نمودار مشتریان (نیاز به اینترنت)
+                        </label>
+                        Chart.js
+                    </div>
                     <button type="submit">محاسبه پورسانت </button>
                 </form>
                 <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
@@ -2552,7 +2605,7 @@ async def calculate_commission(request: Request):
     percents = form.getlist("group_percent")
     due_days_list = form.getlist("group_due_days")
     cash_groups = set(form.getlist("cash_group"))
-
+    use_chart = form.get("use_chart") == "1"
     # بررسی گزینه اعمال مانده‌ها
     apply_balances = form.get("apply_balances") == "1"
 
@@ -2644,14 +2697,6 @@ async def calculate_commission(request: Request):
     LAST_UPLOAD["sales_result"] = sales_result
     LAST_UPLOAD["payments_result"] = payments_result
 
-    # ---------------------------------------------------------
-    # تغییر جدید: بررسی وجود موارد یافت نشده قبل از نمایش نتیجه
-    # ---------------------------------------------------------
-    unresolved = LAST_UPLOAD.get("unresolved_payments", [])
-    if unresolved:
-        # اگر موردی وجود داشت، کاربر را به صفحه رفع اشکال بفرست
-        return RedirectResponse(url="/fix-unresolved", status_code=303)
-
     # -------- خلاصه اعداد --------
     sales_rows = len(sales_result)
     sales_sum = sales_result["Amount"].sum(
@@ -2668,29 +2713,41 @@ async def calculate_commission(request: Request):
         total_commission = float(
             salesperson_result["TotalCommission"].sum() or 0)
 
+    # ... (کدهای قبلی تا قبل از آماده‌سازی جدول فاکتورها بدون تغییر است) ...
+
     # -------- آماده‌سازی جدول فاکتورها برای نمایش --------
     invoices_view = sales_result.copy()
+
     # تاریخ‌ها به شمسی
     for dt_col in ["InvoiceDate", "DueDate"]:
         if dt_col in invoices_view.columns:
             invoices_view[dt_col] = invoices_view[dt_col].map(to_jalali_str)
+
     # درصد به صورت انسانی (عدد درصد)
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = (
             invoices_view["CommissionPercent"] * 100).round(2)
+
     # نرمال‌سازی کدها فقط برای نمایش
     for col in ["InvoiceID", "CustomerCode", group_col]:
         if col in invoices_view.columns:
             invoices_view[col] = invoices_view[col].map(
                 lambda v: canonicalize_code(v) if pd.notna(v) else "")
 
-    # لینک‌دار کردن اسم مشتری برای نمایش نمودار
+    # 👇 ۱. شرطی کردن لینک نام مشتری
+    # اگر use_chart فعال نباشد، نام مشتری فقط متن ساده است، نه لینک
     if "CustomerName" in invoices_view.columns and "CustomerCode" in invoices_view.columns:
         def make_customer_link(row):
             name = row.get("CustomerName", "")
             code = row.get("CustomerCode", "")
             if pd.isna(name) or str(name).strip() == "":
                 return ""
+
+            # اگر کاربر تیک نمودار را نزده باشد، فقط متن برگردان
+            if not use_chart:
+                return str(name)
+
+            # در غیر این صورت لینک بساز
             return (
                 f'<a href="#" class="customer-link" '
                 f'data-customer-code="{code}" '
@@ -2743,14 +2800,157 @@ async def calculate_commission(request: Request):
     debug_names_html = build_debug_names_html(sales_result, payments_result)
     debug_checks_html = build_debug_checks_html(df_chk, payments_result)
 
+    # 👇 ۲. تعریف متغیرهای خالی برای بخش‌های نمودار
+    chart_js_cdn = ""
+    chart_modal_html = ""
+    chart_script_content = ""
+
+    # 👇 ۳. پر کردن متغیرها فقط اگر use_chart فعال باشد
+    if use_chart:
+        chart_js_cdn = '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>'
+
+        chart_modal_html = f"""
+        <!-- مودال نمودار مشتری -->
+        <div id="customer-modal" class="modal-backdrop modal-hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div>
+                        <div class="modal-title" id="modal-customer-title"></div>
+                        <div class="modal-subtitle" id="modal-customer-subtitle"></div>
+                    </div>
+                    <button type="button" class="modal-close-btn" id="modal-close-btn">بستن</button>
+                </div>
+                <div class="modal-body">
+                    <div style="height:260px;">
+                        <canvas id="customer-chart"></canvas>
+                    </div>
+                    <div class="modal-totals">
+                        جمع خرید: <strong id="total-amount"></strong>
+                        &nbsp;|&nbsp;
+                        جمع تسویه: <strong id="total-paid"></strong>
+                        &nbsp;|&nbsp;
+                        مانده: <strong id="total-remaining"></strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+
+        chart_script_content = """
+        <script>
+        (function() {{
+            let chartInstance = null;
+            function closeModal() {{
+                const modal = document.getElementById('customer-modal');
+                if (modal) modal.classList.add('modal-hidden');
+            }}
+            function openModal() {{
+                const modal = document.getElementById('customer-modal');
+                if (modal) modal.classList.remove('modal-hidden');
+            }}
+            // کلیک روی اسم مشتری
+            document.addEventListener('click', function (ev) {{
+                const link = ev.target.closest('.customer-link');
+                if (!link) return;
+                ev.preventDefault();
+                const code = link.getAttribute('data-customer-code') || '';
+                const name = link.getAttribute('data-customer-name') || '';
+                if (!code) {{
+                    alert('کد مشتری مشخص نیست.');
+                    return;
+                }}
+                fetch('/customer-stats?customer_code=' + encodeURIComponent(code))
+                    .then(r => r.json())
+                    .then(data => {{
+                        if (data.error) {{
+                            alert(data.error);
+                            return;
+                        }}
+                        document.getElementById('modal-customer-title').textContent =
+                            data.customerName || name || 'مشتری بدون نام';
+                        document.getElementById('modal-customer-subtitle').textContent =
+                            'کد مشتری: ' + (data.customerCode || code);
+                        document.getElementById('total-amount').textContent =
+                            (data.totals.amount || 0).toLocaleString('fa-IR');
+                        document.getElementById('total-paid').textContent =
+                            (data.totals.paid || 0).toLocaleString('fa-IR');
+                        document.getElementById('total-remaining').textContent =
+                            (data.totals.remaining || 0).toLocaleString('fa-IR');
+                        const points = data.points || [];
+                        const labels = points.map(p => p.date || '');
+                        const amount = points.map(p => p.amount || 0);
+                        const paid = points.map(p => p.paid || 0);
+                        const remaining = points.map(p => p.remaining || 0);
+                        const canvas = document.getElementById('customer-chart');
+                        if (!canvas) return;
+                        const ctx = canvas.getContext('2d');
+                        if (chartInstance) {{
+                            chartInstance.destroy();
+                        }}
+                        chartInstance = new Chart(ctx, {{
+                            type: 'line',
+                            data: {{
+                                labels: labels,
+                                datasets: [
+                                    {{ label: 'خرید', data: amount, tension: 0.2 }},
+                                    {{ label: 'تسویه', data: paid, tension: 0.2 }},
+                                    {{ label: 'مانده', data: remaining, tension: 0.2 }}
+                                ]
+                            }},
+                            options: {{
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                interaction: {{ mode: 'index', intersect: false }},
+                                scales: {{
+                                    y: {{
+                                        ticks: {{
+                                            callback: function(v) {{
+                                                try {{ return v.toLocaleString('fa-IR'); }} catch(e) {{ return v; }}
+                                            }}
+                                        }}
+                                    }}
+                                }}
+                            }}
+                        }});
+                        openModal();
+                    }})
+                    .catch(err => {{
+                        console.error(err);
+                        alert('خطا در دریافت اطلاعات مشتری.');
+                    }});
+            }});
+            // بستن مودال با کلیک روی دکمه یا پس‌زمینه
+            document.addEventListener('click', function (ev) {{
+                const modal = document.getElementById('customer-modal');
+                if (!modal || modal.classList.contains('modal-hidden')) return;
+                const closeBtn = document.getElementById('modal-close-btn');
+                if (ev.target === closeBtn || (closeBtn && closeBtn.contains(ev.target))) {{
+                    closeModal();
+                    return;
+                }}
+                if (ev.target === modal) {{
+                    closeModal();
+                    return;
+                }}
+            }});
+            // بستن با ESC
+            document.addEventListener('keydown', function (ev) {{
+                if (ev.key === 'Escape') {{
+                    closeModal();
+                }}
+            }});
+        }})();
+        </script>
+        """
+
+    # 👇 ۴. ساخت HTML نهایی با استفاده از متغیرهای شرطی
     html = f"""
     <html>
         <head>
             <meta charset="utf-8" />
             <title>نتیجه محاسبه پورسانت</title>
             {BASE_CSS}
-            <!-- Chart.js برای نمودار مشتری -->
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            {chart_js_cdn}  <!-- لینک Chart.js فقط اگر تیک خورده باشد اینجا قرار می‌گیرد -->
         </head>
         <body>
             <div class="container">
@@ -2791,135 +2991,10 @@ async def calculate_commission(request: Request):
                 </div>
                 <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
             </div>
-            <!-- مودال نمودار مشتری -->
-            <div id="customer-modal" class="modal-backdrop modal-hidden">
-                <div class="modal-card">
-                    <div class="modal-header">
-                        <div>
-                            <div class="modal-title" id="modal-customer-title"></div>
-                            <div class="modal-subtitle" id="modal-customer-subtitle"></div>
-                        </div>
-                        <button type="button" class="modal-close-btn" id="modal-close-btn">بستن</button>
-                    </div>
-                    <div class="modal-body">
-                        <div style="height:260px;">
-                            <canvas id="customer-chart"></canvas>
-                        </div>
-                        <div class="modal-totals">
-                            جمع خرید: <strong id="total-amount"></strong>
-                            &nbsp;|&nbsp;
-                            جمع تسویه: <strong id="total-paid"></strong>
-                            &nbsp;|&nbsp;
-                            مانده: <strong id="total-remaining"></strong>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            
+            {chart_modal_html}  <!-- مودال فقط اگر تیک خورده باشد -->
             {DEBUG_TOGGLE_SCRIPT}
-            <script>
-            (function() {{
-                let chartInstance = null;
-                function closeModal() {{
-                    const modal = document.getElementById('customer-modal');
-                    if (modal) modal.classList.add('modal-hidden');
-                }}
-                function openModal() {{
-                    const modal = document.getElementById('customer-modal');
-                    if (modal) modal.classList.remove('modal-hidden');
-                }}
-                // کلیک روی اسم مشتری
-                document.addEventListener('click', function (ev) {{
-                    const link = ev.target.closest('.customer-link');
-                    if (!link) return;
-                    ev.preventDefault();
-                    const code = link.getAttribute('data-customer-code') || '';
-                    const name = link.getAttribute('data-customer-name') || '';
-                    if (!code) {{
-                        alert('کد مشتری مشخص نیست.');
-                        return;
-                    }}
-                    fetch('/customer-stats?customer_code=' + encodeURIComponent(code))
-                        .then(r => r.json())
-                        .then(data => {{
-                            if (data.error) {{
-                                alert(data.error);
-                                return;
-                            }}
-                            document.getElementById('modal-customer-title').textContent =
-                                data.customerName || name || 'مشتری بدون نام';
-                            document.getElementById('modal-customer-subtitle').textContent =
-                                'کد مشتری: ' + (data.customerCode || code);
-                            document.getElementById('total-amount').textContent =
-                                (data.totals.amount || 0).toLocaleString('fa-IR');
-                            document.getElementById('total-paid').textContent =
-                                (data.totals.paid || 0).toLocaleString('fa-IR');
-                            document.getElementById('total-remaining').textContent =
-                                (data.totals.remaining || 0).toLocaleString('fa-IR');
-                            const points = data.points || [];
-                            const labels = points.map(p => p.date || '');
-                            const amount = points.map(p => p.amount || 0);
-                            const paid = points.map(p => p.paid || 0);
-                            const remaining = points.map(p => p.remaining || 0);
-                            const canvas = document.getElementById('customer-chart');
-                            if (!canvas) return;
-                            const ctx = canvas.getContext('2d');
-                            if (chartInstance) {{
-                                chartInstance.destroy();
-                            }}
-                            chartInstance = new Chart(ctx, {{
-                                type: 'line',
-                                data: {{
-                                    labels: labels,
-                                    datasets: [
-                                        {{ label: 'خرید', data: amount, tension: 0.2 }},
-                                        {{ label: 'تسویه', data: paid, tension: 0.2 }},
-                                        {{ label: 'مانده', data: remaining, tension: 0.2 }}
-                                    ]
-                                }},
-                                options: {{
-                                    responsive: true,
-                                    maintainAspectRatio: false,
-                                    interaction: {{ mode: 'index', intersect: false }},
-                                    scales: {{
-                                        y: {{
-                                            ticks: {{
-                                                callback: function(v) {{
-                                                    try {{ return v.toLocaleString('fa-IR'); }} catch(e) {{ return v; }}
-                                                }}
-                                            }}
-                                        }}
-                                    }}
-                                }}
-                            }});
-                            openModal();
-                        }})
-                        .catch(err => {{
-                            console.error(err);
-                            alert('خطا در دریافت اطلاعات مشتری.');
-                        }});
-                }});
-                // بستن مودال با کلیک روی دکمه یا پس‌زمینه
-                document.addEventListener('click', function (ev) {{
-                    const modal = document.getElementById('customer-modal');
-                    if (!modal || modal.classList.contains('modal-hidden')) return;
-                    const closeBtn = document.getElementById('modal-close-btn');
-                    if (ev.target === closeBtn || (closeBtn && closeBtn.contains(ev.target))) {{
-                        closeModal();
-                        return;
-                    }}
-                    if (ev.target === modal) {{
-                        closeModal();
-                        return;
-                    }}
-                }});
-                // بستن با ESC
-                document.addEventListener('keydown', function (ev) {{
-                    if (ev.key === 'Escape') {{
-                        closeModal();
-                    }}
-                }});
-            }})();
-            </script>
+            {chart_script_content}  <!-- اسکریپت‌ها فقط اگر تیک خورده باشند -->
         </body>
     </html>
     """
@@ -4542,219 +4617,3 @@ async def unblacklist_item(request: Request):
     except Exception as e:
         print(f"Error unblacklisting item: {e}")
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
-
-# ------------------ UI: دیباگ اتصال چک‌ها ------------------
-
-
-@app.get("/debug-checks-link", response_class=HTMLResponse)
-async def debug_checks_link_page(request: Request):
-    nav_html = build_nav("main")  # یا می‌توانید یک تب جدید اضافه کنید
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>دیباگ اتصال چک‌ها</title>
-            {BASE_CSS}
-            <script>
-                function showLoading() {{
-                    document.getElementById('loading-msg').style.display = 'block';
-                    document.getElementById('result-area').style.display = 'none';
-                }}
-            </script>
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>بررسی اتصال چک‌ها به پرداخت‌ها</h1>
-                <p>
-                    در این صفحه می‌توانید ببینید که سیستم چگونه شماره چک‌ها را از فایل پرداخت استخراج کرده و با فایل چک‌ها تطبیق می‌دهد.
-                </p>
-                <div class="upload-card">
-                    <form action="/process-debug-checks" method="post" enctype="multipart/form-data" onsubmit="showLoading()">
-                        <div class="form-row">
-                            <label>فایل پرداخت‌ها (Payments):</label><br />
-                            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
-                        </div>
-                        <div class="form-row">
-                            <label>فایل چک‌ها (Checks):</label><br />
-                            <input type="file" name="checks_file" accept=".xlsx,.xls" required />
-                        </div>
-                        <button type="submit">بررسی و نمایش نتایج</button>
-                    </form>
-                </div>
-                <div id="loading-msg" style="display:none; text-align:center; margin-top:20px; color:blue;">
-                    در حال پردازش فایل‌ها...
-                </div>
-                <div id="result-area" style="margin-top: 30px;">
-                    <!-- نتایج اینجا نمایش داده می‌شود -->
-                </div>
-                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
-
-
-@app.post("/process-debug-checks", response_class=HTMLResponse)
-async def process_debug_checks(
-    request: Request,
-    payments_file: UploadFile = File(...),
-    checks_file: UploadFile = File(...)
-):
-    nav_html = build_nav("main")
-    try:
-        # 1. بارگذاری فایل‌ها
-        df_pay = load_payments_excel(payments_file.file)
-        df_chk = load_checks_excel(checks_file.file)
-
-        # ---------------------------------------------------------
-        # تغییر جدید: خواندن فایل customer_codes_bind.xlsx برای مپ نام به کد
-        # ---------------------------------------------------------
-        bind_map = {}
-        bind_file_path = "customer_codes_bind.xlsx"
-        if os.path.exists(bind_file_path):
-            try:
-                df_bind = pd.read_excel(bind_file_path)
-                # فقط ردیف‌هایی که کد دارند و "یافت نشد" نیستند
-                df_bind_valid = df_bind[df_bind["CustomerCode"] != "یافت نشد"]
-                if not df_bind_valid.empty and "CustomerName" in df_bind_valid.columns:
-                    # ساخت دیکشنری نرمال‌سازی شده نام -> کد
-                    for _, row in df_bind_valid.iterrows():
-                        name = str(row["CustomerName"])
-                        # استفاده از تابع نرمال‌سازی موجود
-                        key = name_key_for_matching(name)
-                        code = str(row["CustomerCode"])
-                        if key and code:
-                            bind_map[key] = code
-            except Exception as e:
-                print(f"Error loading bind file for debug: {e}")
-
-        # 2. فیلتر کردن فقط پرداخت‌های چکی
-        if "SourceType" in df_pay.columns:
-            df_checks_only = df_pay[df_pay["SourceType"] == "Check"].copy()
-        else:
-            df_checks_only = df_pay.copy()
-
-        if df_checks_only.empty:
-            return HTMLResponse(content="<h1>هیچ ردیف چکی در فایل پرداخت یافت نشد.</h1><a href='/debug-checks-link'>بازگشت</a>")
-
-        # 3. آماده‌سازی دیتافریم چک‌ها برای جستجوی سریع
-        chk_nums = None
-        if "CheckNumber" in df_chk.columns:
-            chk_nums = (
-                df_chk["CheckNumber"]
-                .astype(str)
-                .str.replace(r"\D", "", regex=True)
-                .str.lstrip("0")
-            )
-
-        results = []
-
-        # 4. حلقه روی هر پرداخت چکی و تلاش برای تطبیق
-        for _, row in df_checks_only.iterrows():
-            pay_desc = str(row.get("Description", ""))
-            pay_check_col = str(row.get("CheckNumber", ""))
-
-            # استخراج شماره چک از پرداخت
-            candidates = []
-            if pay_check_col and pay_check_col != "nan":
-                candidates.append(pay_check_col)
-
-            import re
-            m = re.search(r"(\d{3,10})", pay_desc)
-            if m:
-                candidates.append(m.group(1))
-
-            found_match = False
-            matched_check_info = {}
-
-            for cand in candidates:
-                num = re.sub(r"\D", "", str(cand)).lstrip("0")
-                if not num:
-                    continue
-
-                if chk_nums is not None:
-                    matches = df_chk.loc[chk_nums == num]
-                else:
-                    matches = pd.DataFrame()
-
-                if not matches.empty:
-                    found_match = True
-                    chk_row = matches.iloc[0]
-                    chk_name = str(chk_row.get("CustomerName", ""))
-                    chk_code_from_file = str(chk_row.get("CustomerCode", ""))
-
-                    # ---------------------------------------------------------
-                    # منطق جدید: تلاش برای پیدا کردن کد از فایل bind
-                    # ---------------------------------------------------------
-                    final_code = chk_code_from_file  # پیش‌فرض کد خود فایل چک
-
-                    # اگر کد در فایل چک خالی بود یا نام داشت، تلاش می‌کنیم از bind بخوانیم
-                    if (not chk_code_from_file or chk_code_from_file == "nan") and chk_name:
-                        key = name_key_for_matching(chk_name)
-                        if key in bind_map:
-                            final_code = bind_map[key]
-
-                    matched_check_info = {
-                        "FoundCheckNumber": chk_row.get("CheckNumber", ""),
-                        "FoundCustomerName": chk_name,
-                        "OriginalCheckCode": chk_code_from_file,  # کدی که خود فایل چک داشته
-                        # کدی که از bind پیدا شد (یا همان قبلی)
-                        "FinalCode": final_code
-                    }
-                    break
-
-            results.append({
-                "PayDate": row.get("PaymentDate", ""),
-                "PayDesc": pay_desc,
-                "PayCheckCol": pay_check_col,
-                "ExtractedNum": matched_check_info.get("FoundCheckNumber", "") if found_match else "یافت نشد",
-                "MatchStatus": "✅ تطبیق یافت شد" if found_match else "❌ تطبیق یافت نشد",
-                "CheckCustomerName": matched_check_info.get("FoundCustomerName", "") if found_match else "-",
-                "OriginalCheckCode": matched_check_info.get("OriginalCheckCode", "") if found_match else "-",
-                "FinalCode": matched_check_info.get("FinalCode", "") if found_match else "-",
-            })
-
-        df_result = pd.DataFrame(results)
-
-        # ساخت HTML جدول
-        if not df_result.empty:
-            table_html = df_result.to_html(
-                index=False, border=0, classes="data-table")
-        else:
-            table_html = "<p>داده‌ای برای نمایش وجود ندارد.</p>"
-
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>نتایج دیباگ چک‌ها</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>نتایج بررسی اتصال چک‌ها</h1>
-                    <p>
-                        در جدول زیر، وضعیت تلاش برای پیدا کردن اطلاعات چک نمایش داده شده است.
-                        <br>
-                        <b>ستون OriginalCheckCode:</b> کدی که مستقیماً از فایل چک‌ها خوانده شده است.
-                        <br>
-                        <b>ستون FinalCode:</b> کدی که با تطبیق نام در فایل customer_codes_bind.xlsx به دست آمده است.
-                    </p>
-                    <div class="table-wrapper">
-                        {table_html}
-                    </div>
-                    <div style="margin-top: 20px;">
-                        <a href="/debug-checks-link">آپلود فایل‌های جدید</a>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-
-    except Exception as e:
-        print(f"Error in debug checks: {e}")
-        return HTMLResponse(content=f"<h1>خطا در پردازش: {str(e)}</h1>", status_code=500)
