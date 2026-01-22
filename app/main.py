@@ -1216,246 +1216,153 @@ def build_name_code_mapping(sales_df: pd.DataFrame) -> dict[str, str]:
             result[key] = next(iter(codes))
     return result
 
+# ------------------ بازنویسی توابع با اولویت فایل BIND ------------------
+
 
 def extract_customer_for_payment(
     row: pd.Series,
     checks_df: pd.DataFrame,
-    name_code_map_from_balances: dict[str, str] | None = None,
-):
+    db_map: dict,
+    bind_map: dict  # <--- ورودی جدید: مپ اکسل دستی
+) -> str | None:
     """
-    تشخیص کد مشتری برای هر پرداخت:
-    1) بررسی لیست سیاه (اگر نام در لیست سیاه بود، کد None برگردان).
-    2) نام پرداخت را با دیتابیس مانده‌ها تطبیق می‌دهد.
-    3) اگر چک است، نام صاحب چک را با دیتابیس مانده‌ها چک می‌کند.
+    استخراج کد مشتری برای یک ردیف پرداخت.
+    اولویت‌ها:
+    ۱. فایل اکسل دستی (customer_codes_bind.xlsx)
+    ۲. دیتابیس مانده‌ها (DB Map)
     """
+    stype = row.get("SourceType", "Payment")
     name = row.get("CustomerName")
-    stype = row.get("SourceType")
     desc_str = str(row.get("Description") or "")
 
-    # ---------------------------------------------------------
-    # 1. بررسی لیست سیاه (Blacklist Check)
-    # ---------------------------------------------------------
-    if pd.notna(name):
-        norm_name = normalize_persian_name(str(name))
-        blacklist_path = "blacklist.xlsx"
-        if os.path.exists(blacklist_path):
-            try:
-                df_black = pd.read_excel(blacklist_path)
-                if "CustomerName" in df_black.columns:
-                    # نرمال‌سازی نام‌های لیست سیاه برای مقایسه
-                    black_set = set(df_black["CustomerName"].apply(
-                        normalize_persian_name))
-                    if norm_name in black_set:
-                        return None  # نام در لیست سیاه بود، کدی برگردان
-            except Exception as e:
-                print(f"Error checking blacklist: {e}")
-    # ---------------------------------------------------------
+    # --- گام ۱: پیدا کردن "نام واقعی" ---
+    # اگر چک است، سعی می‌کنیم نام صاحب چک را پیدا کنیم
+    effective_name = name
 
-    # 2) اولویت ۱: تطبیق نام با دیتابیس مانده‌ها
-    if name_code_map_from_balances is not None and pd.notna(name):
-        key = name_key_for_matching(name)
-        if key:
-            mapped_code = name_code_map_from_balances.get(key)
-            if mapped_code:
-                return canonicalize_code(mapped_code)
+    if stype == "Check":
+        # تلاش برای استخراج شماره چک
+        candidates = []
+        if pd.notna(row.get("CheckNumber")):
+            candidates.append(str(row.get("CheckNumber")))
 
-    # 3) اولویت ۲: اگر چک است، از روی فایل چک‌ها نام را بگیریم و با دیتابیس مانده‌ها چک کنیم
-    if stype == "Check" and checks_df is not None and not checks_df.empty:
-        candidates: list[str] = []
-        # استخراج شماره چک از ستون CheckNumber یا توضیحات
-        if "CheckNumber" in row.index:
-            check_val = row["CheckNumber"]
-            if pd.notna(check_val):
-                candidates.append(str(check_val))
+        import re
         m = re.search(r"(\d{3,10})", desc_str)
         if m:
             candidates.append(m.group(1))
 
-        # آماده‌سازی ستون شماره چک در دیتافریم چک‌ها
-        chk_nums = None
-        if "CheckNumber" in checks_df.columns:
-            chk_nums = (
-                checks_df["CheckNumber"]
-                .astype(str)
-                .str.replace(r"\D", "", regex=True)
-                .str.lstrip("0")
-            )
+        # جستجو در فایل چک‌ها
+        if checks_df is not None and not checks_df.empty:
+            # اینجا فرض بر این است که checks_df قبلاً نرمالایز شده یا در تابع اصلی هندل می‌شود
+            # اما برای محکم کاری یک جستجوی ساده انجام میدهیم
+            for cand in candidates:
+                clean_num = re.sub(r"\D", "", str(cand)).lstrip("0")
+                if not clean_num:
+                    continue
 
-        for cand in candidates:
-            num = re.sub(r"\D", "", str(cand)).lstrip("0")
-            if not num:
-                continue
-            if chk_nums is not None:
-                matches = checks_df.loc[chk_nums == num]
-            else:
-                matches = pd.DataFrame()
-            if not matches.empty:
-                chk_row = matches.iloc[0]
-                # اگر خود فایل چک‌ها کد داشت
-                if "CustomerCode" in chk_row and pd.notna(chk_row["CustomerCode"]):
-                    return canonicalize_code(chk_row["CustomerCode"])
-                # اگر نام داشت، آن را با دیتابیس مانده‌ها چک می‌کنیم
-                if name_code_map_from_balances is not None and "CustomerName" in chk_row:
-                    chk_name = chk_row["CustomerName"]
+                # جستجو در ستون CheckNumber دیتافریم چک‌ها
+                # نکته: این بخش می‌تواند کند باشد، بهتر است در prepare_payments مپ ساخته شود
+                # اما برای حفظ ساختار فعلی اینجا می‌نویسیم:
+                found_rows = checks_df[checks_df["CheckNumber"].astype(
+                    str).str.contains(clean_num, na=False)]
+                if not found_rows.empty:
+                    # اگر در خود فایل چک، کد مشتری بود، همان عالی است
+                    chk_code = found_rows.iloc[0].get("CustomerCode")
+                    if pd.notna(chk_code):
+                        return canonicalize_code(chk_code)
+
+                    # اگر کد نبود، نام را برمی‌داریم
+                    chk_name = found_rows.iloc[0].get("CustomerName")
                     if pd.notna(chk_name):
-                        key2 = name_key_for_matching(chk_name)
-                        mapped2 = name_code_map_from_balances.get(key2)
-                        if mapped2:
-                            return canonicalize_code(mapped2)
+                        effective_name = chk_name
+                    break
 
-    # اگر به اینجا رسیدیم یعنی کدی پیدا نشده است.
+    # --- گام ۲: جستجو در فایل اکسل BIND (اولویت بالا) ---
+    if pd.notna(effective_name):
+        key = name_key_for_matching(effective_name)
+        if key and key in bind_map:
+            # اگر در اکسل دستی پیدا شد، فوراً برگردان
+            return canonicalize_code(bind_map[key])
+
+    # --- گام ۳: جستجو در دیتابیس مانده‌ها (اولویت دوم) ---
+    if db_map is not None and pd.notna(effective_name):
+        key = name_key_for_matching(effective_name)
+        if key and key in db_map:
+            return canonicalize_code(db_map[key])
+
     return None
 
 
 def prepare_payments(
     payments_df: pd.DataFrame,
     checks_df: pd.DataFrame,
+    # این آرگومان هست اما فعلاً برای مچ کردن استفاده نمی‌شود (مچ در مرحله بعد است)
     sales_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """
-    آماده‌سازی دیتافریم پرداخت‌ها و وصل کردن هر پرداخت به یک مشتری.
-    خروجی: (دیتافریم پرداخت‌ها، لیستی از آیتم‌های یافت نشده برای رفع اشکال)
+    آماده‌سازی پرداخت‌ها با اولویت فایل اکسل Bind.
     """
     payments_df = payments_df.copy()
 
-    # تاریخ
+    # تبدیل تاریخ و فرمت‌دهی اولیه
     if "PaymentDate" in payments_df.columns:
         payments_df["PaymentDate"] = payments_df["PaymentDate"].apply(
             parse_jalali_or_gregorian)
 
-    # مبلغ
     if "Amount" not in payments_df.columns:
-        raise ValueError("در فایل پرداخت‌ها نتوانستم ستون مبلغ را پیدا کنم.")
+        raise ValueError("ستون Amount در فایل پرداخت‌ها یافت نشد.")
     payments_df["Amount"] = payments_df["Amount"].astype(float)
 
-    # ستون‌های کمکی
-    if "CustomerCode" not in payments_df.columns:
-        payments_df["CustomerCode"] = None
     if "CustomerName" not in payments_df.columns:
         payments_df["CustomerName"] = None
 
     # ---------------------------------------------------------
-    # تغییر مهم: ساخت مپ از دیتابیس مانده‌ها
+    # ۱. لود کردن مپ‌ها (حافظه موقت)
     # ---------------------------------------------------------
-    name_code_map_from_balances = build_name_code_map_from_balances()
 
-    # ---------------------------------------------------------
-    # اصلاحیه جدید: ساخت مپ شماره چک -> نام صاحب چک (از فایل چک‌ها)
-    # این مپ برای جایگزینی نام در پرداخت‌های چکی استفاده می‌شود
-    # ---------------------------------------------------------
-    check_number_to_name_map = {}
-    if checks_df is not None and not checks_df.empty:
-        # نرمال‌سازی شماره چک‌ها در فایل چک برای جستجوی دقیق
-        if "CheckNumber" in checks_df.columns:
-            chk_nums = (
-                checks_df["CheckNumber"]
-                .astype(str)
-                .str.replace(r"\D", "", regex=True)
-                .str.lstrip("0")
-            )
-            # نگاشت شماره تمیز شده -> نام مشتری
-            # اگر چند چک با یک شماره وجود داشت، اولین آن را در نظر می‌گیریم
-            for idx, num in chk_nums.items():
-                if pd.notna(num) and num != "":
-                    check_number_to_name_map[num] = checks_df.at[idx,
-                                                                 "CustomerName"]
+    # الف) مپ اکسل دستی (اولویت اول)
+    # دیکشنری: {normalized_name: code}
+    bind_map = load_name_code_map_from_excel()
+
+    # ب) مپ دیتابیس (اولویت دوم)
+    db_map = build_name_code_map_from_balances()
 
     unresolved_items = []
 
-    def resolve_and_log(row):
-        name = row.get("CustomerName")
-        amount = row.get("Amount")
-        date = row.get("PaymentDate")
-        source = row.get("SourceType", "Payment")
-
-        # ---------------------------------------------------------
-        # اصلاحیه: اگر پرداخت چک است، نام را از مپ فایل چک‌ها بگیر
-        # ---------------------------------------------------------
-        final_name_for_display = name  # پیش‌فرض همان نام فایل پرداخت است
-
-        if source == "Check":
-            # استخراج شماره چک از ردیف پرداخت
-            check_val = row.get("CheckNumber")
-            desc_str = str(row.get("Description") or "")
-            candidates = []
-
-            if pd.notna(check_val):
-                candidates.append(str(check_val))
-
-            import re
-            m = re.search(r"(\d{3,10})", desc_str)
-            if m:
-                candidates.append(m.group(1))
-
-            # تلاش برای پیدا کردن نام در مپ چک‌ها
-            for cand in candidates:
-                num = re.sub(r"\D", "", str(cand)).lstrip("0")
-                if num in check_number_to_name_map:
-                    final_name_for_display = check_number_to_name_map[num]
-                    break
-
-        # تلاش برای پیدا کردن کد
-        # نکته: تابع extract_customer_for_payment منطق کامل (لیست سیاه و دیتابیس) را انجام می‌دهد
+    def resolve_logic(row):
+        # این تابع از extract_customer_for_payment جدید استفاده می‌کند
         code = extract_customer_for_payment(
             row,
             checks_df,
-            name_code_map_from_balances
+            db_map=db_map,
+            bind_map=bind_map  # <--- پاس دادن مپ جدید
         )
 
         if pd.isna(code):
-            if pd.notna(final_name_for_display):
-                unresolved_items.append({
-                    "Name": final_name_for_display,  # استفاده از نام اصلاح شده برای لیست یافت نشده‌ها
-                    "Amount": amount,
-                    "Date": date,
-                    "Source": source
-                })
+            # برای گزارش‌دهی موارد پیدا نشده
+            unresolved_items.append({
+                "Name": row.get("CustomerName"),
+                "Amount": row.get("Amount"),
+                "Date": row.get("PaymentDate"),
+                "Source": row.get("SourceType", "Payment")
+            })
             return "یافت نشد"
 
         return code
 
-    payments_df["ResolvedCustomer"] = payments_df.apply(
-        resolve_and_log, axis=1)
+    # اعمال تابع روی همه ردیف‌ها
+    payments_df["ResolvedCustomer"] = payments_df.apply(resolve_logic, axis=1)
 
-    # نکته: برای ResolvedCustomerKey چون "یافت نشد" رشته است، canonicalize کار نمیکند
+    # ساخت کلید استاندارد (ResolvedCustomerKey) برای مقایسه راحت با فایل فروش
     def clean_key(val):
         if val == "یافت نشد":
-            return "یافت نشد"
+            return None  # یا "یافت نشد" بسته به منطق بعدی شما
         return canonicalize_code(val)
 
     payments_df["ResolvedCustomerKey"] = payments_df["ResolvedCustomer"].map(
         clean_key)
 
-    # ---------------------------------------------------------
-    # اصلاحیه نهایی: به‌روزرسانی ستون CustomerName در دیتافریم اصلی
-    # تا در جداول خروجی، نام صحیح (نام صاحب چک) نمایش داده شود
-    # ---------------------------------------------------------
-    # چون در تابع resolve_and_log دسترسی مستقیم به ستون دیتافریم اصلی نداریم که تغییر دهیم،
-    # اینجا یک بار دیگر روی دیتافریم می‌چرخیم و نام‌های چکی را اصلاح می‌کنیم.
-    # این کار کمی هزینه دارد اما تمیزترین راه برای حفظ ساختار قبلی است.
-
-    def update_check_names(row):
-        if row.get("SourceType") == "Check":
-            check_val = row.get("CheckNumber")
-            desc_str = str(row.get("Description") or "")
-            candidates = []
-
-            if pd.notna(check_val):
-                candidates.append(str(check_val))
-
-            import re
-            m = re.search(r"(\d{3,10})", desc_str)
-            if m:
-                candidates.append(m.group(1))
-
-            for cand in candidates:
-                num = re.sub(r"\D", "", str(cand)).lstrip("0")
-                if num in check_number_to_name_map:
-                    return check_number_to_name_map[num]
-        return row.get("CustomerName")
-
-    # اعمال تغییر نام روی دیتافریم نهایی
-    payments_df["CustomerName"] = payments_df.apply(update_check_names, axis=1)
+    # فیلتر کردن ردیف‌هایی که کد پیدا نشده (اختیاری - اگر می‌خواهید در محاسبات شرکت نکنند)
+    # فعلا همه را نگه می‌داریم تا کاربر ببیند چه چیزی مچ نشده
 
     return payments_df, unresolved_items
 
