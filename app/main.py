@@ -32,6 +32,90 @@ DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
 # در بالای فایل، جایی که تنظیمات دیگر هستند
 
+
+# ------------------ مدیریت بلک لیست ------------------ #
+
+
+BLACKLIST_FILE = "blacklist.xlsx"
+MARKETERS_PATH = "marketers.xlsx"
+PRODUCT_BLACKLIST_PATH = "product_blacklist.xlsx"
+
+
+def load_blacklist_sets():
+    """
+    خواندن فایل اکسل بلک‌لیست و بازگرداندن دو مجموعه:
+    1. set of banned_codes (canonicalized)
+    2. set of banned_names (normalized)
+    """
+    banned_codes = set()
+    banned_names = set()
+
+    if not os.path.exists(BLACKLIST_FILE):
+        return banned_codes, banned_names
+
+    try:
+        df = pd.read_excel(BLACKLIST_FILE)
+
+        # 1. جمع‌آوری کدها
+        if "CustomerCode" in df.columns:
+            for val in df["CustomerCode"]:
+                c = canonicalize_code(val)
+                if c:
+                    banned_codes.add(c)
+
+        # 2. جمع‌آوری نام‌ها
+        if "CustomerName" in df.columns:
+            for val in df["CustomerName"]:
+                n = normalize_persian_name(val)
+                if n:
+                    banned_names.add(n)
+
+    except Exception as e:
+        print(f"Error loading blacklist file: {e}")
+
+    return banned_codes, banned_names
+
+
+# ------------------ مدیریت لیست سیاه کالا ------------------ #
+
+def load_product_blacklist_set():
+    """
+    خواندن کدهای کالای ممنوعه و بازگرداندن یک مجموعه (Set) از کدهای نرمال‌شده.
+    """
+    banned_products = set()
+    if not os.path.exists(PRODUCT_BLACKLIST_PATH):
+        return banned_products
+
+    try:
+        df = pd.read_excel(PRODUCT_BLACKLIST_PATH)
+        # فرض می‌کنیم ستون ProductCode یا 'کد کالا' داریم
+        col_name = None
+        for c in df.columns:
+            if "code" in c.lower() or "کد" in c:
+                col_name = c
+                break
+
+        if col_name:
+            # استفاده از canonicalize_code برای اینکه 101 با 101.0 یکی شود
+            for val in df[col_name]:
+                c = canonicalize_code(val)
+                if c:
+                    banned_products.add(c)
+    except Exception as e:
+        print(f"Error loading product blacklist: {e}")
+
+    return banned_products
+
+
+def save_product_blacklist(codes: list):
+    """
+    ذخیره لیست کدهای ممنوعه در اکسل
+    """
+    df = pd.DataFrame({"ProductCode": codes, "DateAdded": [
+                      datetime.now()] * len(codes)})
+    df.to_excel(PRODUCT_BLACKLIST_PATH, index=False)
+
+
 # ---------------------------------------------------------
 #  گام ۱: افزودن ماژول‌های منطق زمانی و CRM
 # ---------------------------------------------------------
@@ -948,9 +1032,14 @@ hr {
 def build_nav(active: str) -> str:
     def cls(tab: str) -> str:
         return "active" if tab == active else ""
+
+    # نکته: در خط زیر برای product-blacklist کلاس درست ست شده است
     return f'''
     <div class="navbar">
         <a href="/" class="{cls("main")}">محاسبه پورسانت</a>
+        <a href="/marketers" class="{cls("marketers")}">مدیریت بازاریاب‌ها</a>
+        <a href="/blacklist" class="{cls("blacklist")}">لیست سیاه مشتریان</a>
+        <a href="/product-blacklist" class="{cls("product-blacklist")}">لیست سیاه کالا</a>
         <a href="/bind-codes" class="{cls("bind")}">عطف کد به مشتری</a>
         <a href="/fix-unresolved" class="{cls("fix")}">رفع اشکال کدها</a>
         <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا</a>
@@ -958,6 +1047,132 @@ def build_nav(active: str) -> str:
         <a href="/customer-balances" class="{cls("balances")}">مدیریت مانده مشتریان</a>
     </div>
     '''
+
+
+# --- روت‌های صفحه مدیریت بلک‌لیست ---
+
+
+@app.get("/blacklist", response_class=HTMLResponse)
+async def blacklist_page(request: Request):
+    nav_html = build_nav("blacklist")
+
+    file_path = "blacklist.xlsx"
+    data_records = []
+
+    if os.path.exists(file_path):
+        try:
+            df = pd.read_excel(file_path)
+
+            # ---------------------------------------------------------
+            # اصلاح نمایش کدها (حذف .0 و تبدیل nan به رشته خالی)
+            # ---------------------------------------------------------
+            if "CustomerCode" in df.columns:
+                # استفاده از تابع canonicalize_code که قبلاً در کدتان دارید
+                df["CustomerCode"] = df["CustomerCode"].apply(
+                    lambda x: canonicalize_code(x) if pd.notna(x) else ""
+                )
+
+                # اطمینان از اینکه مقادیر None یا 'nan' به رشته خالی تبدیل می‌شوند
+                df["CustomerCode"] = df["CustomerCode"].fillna(
+                    "").astype(str).replace("nan", "")
+
+            # تبدیل تاریخ برای نمایش زیباتر (اختیاری)
+            if "Date Added" in df.columns:
+                df["Date Added"] = df["Date Added"].fillna("")
+            elif "DateAdded" in df.columns:  # هندل کردن نام‌های مختلف احتمالی
+                df["DateAdded"] = df["DateAdded"].fillna("")
+
+            # جایگزینی NaN در کل دیتافریم برای جلوگیری از خطا در تمپلیت
+            df = df.fillna("")
+
+            data_records = df.to_dict(orient="records")
+
+        except Exception as e:
+            print(f"Error loading blacklist: {e}")
+            data_records = []
+
+    # رندر کردن قالب
+    # توجه: کد HTML را می‌توانید همینجا رشته کنید یا از templates استفاده کنید.
+    # در اینجا فرض بر این است که ساختار مشابه بقیه صفحات است:
+
+    html = f"""
+    <html>
+    <head>
+        <title>لیست سیاه</title>
+        {BASE_CSS}
+    </head>
+    <body>
+        <div class="container">
+            {nav_html}
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h1>مدیریت لیست سیاه</h1>
+                <a href="/upload-blacklist" class="pill-button" style="text-decoration:none;">آپلود لیست جدید</a>
+            </div>
+
+            <div class="upload-card" style="margin-top:20px;">
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 100px;">کد مشتری</th>
+                                <th>نام مشتری</th>
+                                <th style="width: 150px;">تاریخ افزودن</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+    """
+
+    if not data_records:
+        html += """
+            <tr>
+                <td colspan="3" style="text-align:center; padding:20px; color:#6b7280;">
+                    لیست سیاه خالی است یا فایلی وجود ندارد.
+                </td>
+            </tr>
+        """
+    else:
+        for row in data_records:
+            # هندل کردن نام‌های احتمالی ستون تاریخ
+            date_val = row.get("Date Added") or row.get("DateAdded") or ""
+
+            html += f"""
+            <tr>
+                <td style="direction: ltr; text-align: center;">{row.get('CustomerCode', '')}</td>
+                <td>{row.get('CustomerName', '')}</td>
+                <td style="direction: ltr; text-align: center; font-size:11px; color:#666;">{date_val}</td>
+            </tr>
+            """
+
+    html += """
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <a class="footer-link" href="/">بازگشت به خانه</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/upload-blacklist")
+async def upload_blacklist(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        # فقط چک میکنیم فایل اکسل سالم باشد
+        temp_df = pd.read_excel(io.BytesIO(contents))
+        if "CustomerCode" not in temp_df.columns:
+            return HTMLResponse("<h3>خطا: فایل اکسل باید ستون CustomerCode داشته باشد.</h3><a href='/blacklist'>بازگشت</a>")
+
+        # ذخیره روی فایل اصلی
+        with open(BLACKLIST_FILE, "wb") as f:
+            f.write(contents)
+
+        return RedirectResponse(url="/blacklist", status_code=303)
+    except Exception as e:
+        return HTMLResponse(f"<h3>خطا در آپلود: {e}</h3><a href='/blacklist'>بازگشت</a>")
 
 # ------------------ توابع کمکی ------------------ #
 
@@ -1369,37 +1584,34 @@ def prepare_payments(
 
 def build_name_code_map_from_balances() -> dict[str, str]:
     """
-    ساخت دیکشنری نام نرمال شده -> کد مشتری از روی دیتابیس مانده‌ها.
-    (نسخه اصلاح شده: نام‌های موجود در لیست سیاه حذف می‌شوند)
+    ساخت دیکشنری نام -> کد.
+    اگر کد مشتری یا نام مشتری در بلک لیست باشد، در نظر گرفته نمی‌شود.
     """
     balances = load_balances_from_db()
     name_to_code = {}
 
-    # --- خواندن لیست سیاه برای حذف نام‌های ممنوعه ---
-    blacklist_set = set()
-    blacklist_path = "blacklist.xlsx"
-    if os.path.exists(blacklist_path):
-        try:
-            df_black = pd.read_excel(blacklist_path)
-            if "CustomerName" in df_black.columns:
-                blacklist_set = set(
-                    df_black["CustomerName"].apply(normalize_persian_name))
-        except Exception as e:
-            print(f"Error loading blacklist in build_name_code_map: {e}")
-    # ----------------------------------------------------
+    # بارگذاری لیست سیاه (کدها و نام‌ها)
+    banned_codes, banned_names = load_blacklist_sets()
 
     for item in balances:
         name = item.get("CustomerName")
         code = item.get("CustomerCode")
+
         if name and code:
+            # 1. چک کردن کد
+            clean_code = canonicalize_code(code)
+            if clean_code in banned_codes:
+                continue
+
+            # 2. چک کردن نام
+            norm_name = normalize_persian_name(name)
+            if norm_name in banned_names:
+                continue
+
             key = name_key_for_matching(name)
             if key:
-                # چک کردن لیست سیاه
-                norm_name = normalize_persian_name(name)
-                if norm_name in blacklist_set:
-                    continue  # اگر در لیست سیاه بود، اصلاً اضافه نکن
-
                 name_to_code[key] = str(code).strip()
+
     return name_to_code
 
 
@@ -1434,34 +1646,121 @@ def load_name_code_map_from_excel() -> dict[str, str]:
     return name_to_code
 
 
+def load_allowed_marketers() -> set:
+    """
+    لیست بازاریاب‌های مجاز را برمی‌گرداند (مجموعه‌ای از نام‌های نرمال شده).
+    """
+    if not os.path.exists(MARKETERS_PATH):
+        return set()  # اگر فایل نباشد، یعنی هیچ بازاریابی مجاز نیست (یا همه غیرمجازند؟ بسته به منطق)
+        # نکته: اگر فایل وجود نداشته باشد، منطقاً باید فرض کنیم فیلتر بازاریاب غیرفعال است
+        # اما طبق درخواست شما "فقط و فقط... در لیست باشند"، پس اگر لیست خالی باشد، خروجی صفر خواهد بود.
+
+    try:
+        df = pd.read_excel(MARKETERS_PATH)
+        # فرض می‌کنیم ستونی به نام 'MarketerName' یا 'VisitorName' داریم
+        col = next((c for c in df.columns if "marketer" in c.lower()
+                   or "visitor" in c.lower() or "بازاریاب" in c), None)
+
+        if not col:
+            return set()
+
+        # نرمال‌سازی نام‌ها برای مقایسه دقیق
+        return set(df[col].dropna().apply(lambda x: normalize_persian_name(str(x))).unique())
+    except Exception as e:
+        print(f"Error loading marketers: {e}")
+        return set()
+
+
+def save_marketers_list(names: list):
+    df = pd.DataFrame({"MarketerName": names})
+    df.to_excel(MARKETERS_PATH, index=False)
+
+
 def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) -> pd.DataFrame:
     """
-    آماده‌سازی دیتافریم فروش‌ها:
-    - تبدیل تاریخ‌ها
-    - تعیین CustomerKey استاندارد (فقط بر اساس کد مشتری)
-    - محاسبه DueDate و Priority بر اساس تنظیمات گروه
-    - تعیین درصد پورسانت
+    نسخه جدید شامل:
+    1. فیلتر بازاریاب‌ها (Whitelist)
+    2. فیلتر کالاها (Product Blacklist) -> جدید
+    3. فیلتر مشتریان (Customer Blacklist)
     """
     sales_df = sales_df.copy()
 
+    # --- 1. فیلتر بازاریاب‌ها (Marketers Whitelist) ---
+    allowed_marketers = load_allowed_marketers()
+    if os.path.exists(MARKETERS_PATH):
+        if "Salesperson" in sales_df.columns:
+            sales_df["_TempMarketerNorm"] = sales_df["Salesperson"].apply(
+                lambda x: normalize_persian_name(str(x))
+            )
+            sales_df = sales_df[sales_df["_TempMarketerNorm"].isin(
+                allowed_marketers)]
+            sales_df.drop(columns=["_TempMarketerNorm"], inplace=True)
+        else:
+            # اگر فایل هست ولی ستون نیست، کل دیتا حذف شود (امنیت)
+            sales_df = sales_df.iloc[0:0]
+
+    # --- 2. فیلتر کالاهای ممنوعه (Product Blacklist - NEW) ---
+    # فرض: ستون کالا در فایل فروش 'ProductCode' نام دارد.
+    # اگر نام ستون چیز دیگری است (مثلاً 'Product Code' یا 'کد کالا') اینجا را تغییر دهید.
+    product_col_name = "ProductCode"
+
+    # چک می‌کنیم آیا ستون کالا اصلاً وجود دارد؟
+    if product_col_name in sales_df.columns:
+        banned_products = load_product_blacklist_set()
+        if banned_products:
+            sales_df["_TempProdKey"] = sales_df[product_col_name].map(
+                canonicalize_code)
+
+            before_prod_filter = len(sales_df)
+            # نگه‌داشتن ردیف‌هایی که کد کالایشان در لیست سیاه نیست
+            sales_df = sales_df[~sales_df["_TempProdKey"].isin(
+                banned_products)]
+
+            removed = before_prod_filter - len(sales_df)
+            if removed > 0:
+                print(f"PRODUCT BLACKLIST: Removed {removed} rows.")
+
+            sales_df.drop(columns=["_TempProdKey"], inplace=True)
+
+    # --- 3. آماده‌سازی ستون‌های ضروری (جلوگیری از خطا در صورت خالی شدن) ---
     if "InvoiceDate" not in sales_df.columns:
-        raise ValueError("در فایل فروش ستونی به نام 'InvoiceDate' پیدا نشد.")
+        if sales_df.empty:
+            pass
+        else:
+            raise ValueError(
+                "در فایل فروش ستونی به نام 'InvoiceDate' پیدا نشد.")
+
+    if sales_df.empty:
+        expected_cols = ["InvoiceDate", "CustomerCode", "CustomerName", "Amount",
+                         "Remaining", "CommissionAmount", "DueDate", "Priority", "PriorityRank"]
+        for c in expected_cols:
+            if c not in sales_df.columns:
+                sales_df[c] = pd.NA
+        return sales_df
+
     sales_df["InvoiceDate"] = sales_df["InvoiceDate"].apply(
         parse_jalali_or_gregorian)
 
-    # CustomerKey استاندارد برای وصل کردن به پرداخت‌ها
-    # تغییر مهم: فقط و فقط اگر CustomerCode وجود داشت، کلید را می‌سازیم
-    if "CustomerCode" in sales_df.columns:
-        sales_df["CustomerKey"] = sales_df["CustomerCode"].map(
-            canonicalize_code)
-        # حذف ردیف‌هایی که کد مشتری ندارند (چون قابل تطبیق نیستند)
-        sales_df = sales_df[sales_df["CustomerKey"].notna()]
-    else:
-        # اگر ستون کد وجود نداشت، خطا می‌دهیم چون منطق جدید بر پایه کد است
-        raise ValueError(
-            "در فایل فروش ستونی به نام 'CustomerCode' پیدا نشد. منطق جدید نیازمند کد مشتری است.")
+    if "CustomerCode" not in sales_df.columns:
+        sales_df["CustomerCode"] = pd.NA
 
-    # اگر DueDate داشتیم، تبدیل کنیم؛ اگر نه، بعداً حساب می‌کنیم
+    # --- 4. فیلتر مشتریان (Customer Blacklist) ---
+    banned_codes, banned_names = load_blacklist_sets()
+    sales_df["_TempKey"] = sales_df["CustomerCode"].map(canonicalize_code)
+    sales_df["_TempName"] = sales_df["CustomerName"].apply(
+        normalize_persian_name)
+
+    mask_banned_code = sales_df["_TempKey"].isin(banned_codes)
+    mask_banned_name = sales_df["_TempName"].isin(banned_names)
+    sales_df = sales_df[~(mask_banned_code | mask_banned_name)]
+
+    sales_df.drop(columns=["_TempKey", "_TempName"], inplace=True)
+    # ------------------------------------------------------------------
+
+    # ادامه منطق استاندارد محاسبات...
+    sales_df["CustomerKey"] = sales_df["CustomerCode"].map(canonicalize_code)
+    sales_df = sales_df[sales_df["CustomerKey"].notna()]
+
     if "DueDate" in sales_df.columns:
         sales_df["DueDate"] = sales_df["DueDate"].apply(
             parse_jalali_or_gregorian)
@@ -1480,6 +1779,7 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
         if cfg is not None:
             due_days = cfg.get("due_days")
         if not due_days or due_days <= 0:
+            # تابع get_priority باید موجود باشد
             base_priority = get_priority(row.get(group_col, ""))
             due_days = 7 if base_priority == "cash" else 90
         return invoice_date + pd.to_timedelta(due_days, unit="D")
@@ -1497,6 +1797,7 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
                 return "cash"
         except Exception:
             pass
+        # تابع get_priority باید موجود باشد
         return get_priority(row.get(group_col, ""))
 
     sales_df["Priority"] = sales_df.apply(compute_priority, axis=1)
@@ -1513,7 +1814,8 @@ def prepare_sales(sales_df: pd.DataFrame, group_config: dict, group_col: str) ->
         return float(cfg.get("percent", 0.0))
 
     if "Amount" not in sales_df.columns:
-        raise ValueError("در فایل فروش ستونی به نام 'Amount' پیدا نشد.")
+        if not sales_df.empty:
+            raise ValueError("در فایل فروش ستونی به نام 'Amount' پیدا نشد.")
 
     sales_df["CommissionPercent"] = sales_df.apply(row_percent, axis=1)
     sales_df["Amount"] = sales_df["Amount"].astype(float)
@@ -4524,3 +4826,400 @@ async def unblacklist_item(request: Request):
     except Exception as e:
         print(f"Error unblacklisting item: {e}")
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/marketers", response_class=HTMLResponse)
+async def marketers_page(request: Request):
+    nav_html = build_nav("marketers")
+
+    marketers_list = []
+    if os.path.exists(MARKETERS_PATH):
+        try:
+            df = pd.read_excel(MARKETERS_PATH)
+            col = next((c for c in df.columns if "marketer" in c.lower()
+                       or "visitor" in c.lower() or "بازاریاب" in c), None)
+            if col:
+                marketers_list = df[col].dropna().tolist()
+        except:
+            pass
+
+    # ساخت HTML جدول
+    rows_html = ""
+    for name in marketers_list:
+        rows_html += f"""
+        <tr>
+            <td>{name}</td>
+            <td style="width: 80px; text-align: center;">
+                <form action="/marketers/delete" method="post" style="margin:0;">
+                    <input type="hidden" name="marketer_name" value="{name}">
+                    <button type="submit" style="background:none; border:none; cursor:pointer; color:red; font-size:16px;">&times;</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    if not rows_html:
+        rows_html = "<tr><td colspan='2' style='text-align:center; color:#999;'>هیچ بازاریابی تعریف نشده است.</td></tr>"
+
+    html = f"""
+    <html>
+    <head>
+        <title>مدیریت بازاریاب‌ها</title>
+        {BASE_CSS}
+    </head>
+    <body>
+        <div class="container">
+            {nav_html}
+            <h1>مدیریت لیست سفید بازاریاب‌ها</h1>
+            <p style="font-size:13px; color:#555;">فقط فروش‌هایی محاسبه می‌شوند که نام بازاریاب آن‌ها در این لیست باشد.</p>
+            
+            <div class="upload-grid">
+                <!-- کارت افزودن دستی -->
+                <div class="upload-card">
+                    <div class="upload-card-title">افزودن بازاریاب جدید</div>
+                    <form action="/marketers/add" method="post" style="display:flex; gap:10px;">
+                        <input type="text" name="new_marketer" placeholder="نام بازاریاب" required style="flex:1;">
+                        <button type="submit" class="pill-button">افزودن</button>
+                    </form>
+                    
+                    <hr style="margin: 15px 0;">
+                    
+                    <div class="upload-card-title">آپلود اکسل بازاریاب‌ها</div>
+                    <form action="/marketers/upload" method="post" enctype="multipart/form-data">
+                        <input type="file" name="file" accept=".xlsx" required style="font-size:12px;">
+                        <button type="submit" class="pill-button" style="margin-top:5px;">آپلود و جایگزینی</button>
+                    </form>
+                    <p style="font-size:11px; color:#888; margin-top:5px;">فایل اکسل باید ستونی به نام MarketerName یا "نام بازاریاب" داشته باشد.</p>
+                </div>
+
+                <!-- جدول لیست -->
+                <div class="upload-card">
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>نام بازاریاب</th>
+                                    <th>حذف</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows_html}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <a class="footer-link" href="/">بازگشت به خانه</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/marketers/add")
+async def add_marketer(request: Request):
+    form = await request.form()
+    new_name = form.get("new_marketer", "").strip()
+
+    if new_name:
+        current_list = []
+        if os.path.exists(MARKETERS_PATH):
+            try:
+                df = pd.read_excel(MARKETERS_PATH)
+                col = next((c for c in df.columns if "marketer" in c.lower(
+                ) or "visitor" in c.lower() or "بازاریاب" in c), None)
+                if col:
+                    current_list = df[col].dropna().tolist()
+            except:
+                pass
+
+        if new_name not in current_list:
+            current_list.append(new_name)
+            save_marketers_list(current_list)
+
+    return RedirectResponse(url="/marketers", status_code=303)
+
+
+@app.post("/marketers/delete")
+async def delete_marketer(request: Request):
+    form = await request.form()
+    name_to_delete = form.get("marketer_name", "")
+
+    if os.path.exists(MARKETERS_PATH):
+        try:
+            df = pd.read_excel(MARKETERS_PATH)
+            col = next((c for c in df.columns if "marketer" in c.lower()
+                       or "visitor" in c.lower() or "بازاریاب" in c), None)
+            if col:
+                df = df[df[col] != name_to_delete]
+                df.to_excel(MARKETERS_PATH, index=False)
+        except:
+            pass
+
+    return RedirectResponse(url="/marketers", status_code=303)
+
+
+@app.post("/marketers/upload")
+async def upload_marketers(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+        # پیدا کردن ستون مناسب
+        col = next((c for c in df.columns if "marketer" in c.lower()
+                   or "visitor" in c.lower() or "بازاریاب" in c), None)
+
+        if col:
+            # ذخیره استاندارد با هدر MarketerName
+            clean_list = df[col].dropna().unique().tolist()
+            save_marketers_list(clean_list)
+    except Exception as e:
+        print(f"Error uploading marketers: {e}")
+
+    return RedirectResponse(url="/marketers", status_code=303)
+
+
+@app.get("/product-blacklist", response_class=HTMLResponse)
+async def view_product_blacklist(request: Request):
+    # ---------------------------------------------------------
+    # 1. لود کردن مپ کالاها (برای پیشنهاد در جستجو و نمایش نام)
+    # ---------------------------------------------------------
+    try:
+        df_map = load_product_group_map()
+        if not df_map.empty:
+            df_map["ProductCode"] = df_map["ProductCode"].apply(
+                canonicalize_code)
+    except Exception:
+        df_map = pd.DataFrame(columns=["ProductCode", "ProductName"])
+
+    # ساختن گزینه‌های دیتالیست (برای کمک به پر کردن کد)
+    datalist_options = ""
+    if not df_map.empty:
+        df_sorted = df_map.sort_values(by="ProductName", na_position='last')
+        for _, row in df_sorted.iterrows():
+            c = row.get("ProductCode", "")
+            n = row.get("ProductName", "")
+            if c:
+                # نمایش: نام کالا (کد)
+                datalist_options += f'<option value="{c}">{n}</option>'
+
+    # ---------------------------------------------------------
+    # 2. لود کردن لیست سیاه فعلی
+    # ---------------------------------------------------------
+    blacklist_data = []
+    if os.path.exists(PRODUCT_BLACKLIST_PATH):
+        try:
+            df_bl = pd.read_excel(PRODUCT_BLACKLIST_PATH)
+            if not df_bl.empty:
+                df_bl["ProductCode"] = df_bl["ProductCode"].apply(
+                    canonicalize_code)
+                blacklist_data = df_bl
+            else:
+                blacklist_data = pd.DataFrame()
+        except Exception:
+            blacklist_data = pd.DataFrame()
+    else:
+        blacklist_data = pd.DataFrame()
+
+    # ---------------------------------------------------------
+    # 3. آماده‌سازی داده‌ها برای جدول
+    # ---------------------------------------------------------
+    final_list = []
+    if not isinstance(blacklist_data, list) and not blacklist_data.empty:
+        # تبدیل به دیکشنری
+        records = blacklist_data.to_dict(orient="records")
+
+        for item in records:
+            p_code = item.get("ProductCode", "")
+            # اولویت نام: 1. نامی که دستی وارد شده (در لیست سیاه هست) 2. نام از مپ کالاها
+            p_name_manual = item.get("ProductName", "")
+
+            p_name_final = ""
+            if pd.notna(p_name_manual) and str(p_name_manual).strip():
+                p_name_final = str(p_name_manual).strip()
+            else:
+                # جستجو در مپ
+                if not df_map.empty:
+                    match = df_map[df_map["ProductCode"] == p_code]
+                    if not match.empty:
+                        p_name_final = match.iloc[0]["ProductName"]
+
+            # افزودن به لیست نهایی
+            item["DisplayName"] = p_name_final
+            final_list.append(item)
+
+    # ---------------------------------------------------------
+    # 4. تولید HTML جدول
+    # ---------------------------------------------------------
+    rows_html = ""
+    if final_list:
+        for item in final_list:
+            p_code = item.get("ProductCode", "")
+            p_name = item.get("DisplayName", "")
+            d_added = item.get("DateAdded", "")
+
+            if not p_name:
+                p_name = '<span style="color:#9ca3af; font-style:italic;">---</span>'
+
+            rows_html += f'''
+            <tr>
+                <td style="font-weight:bold; font-family: monospace;">{p_code}</td>
+                <td>{p_name}</td>
+                <td style="direction: ltr; text-align: right;">{d_added}</td>
+                <td style="text-align: center;">
+                    <form action="/product-blacklist/delete" method="post" style="margin:0;">
+                        <input type="hidden" name="code" value="{p_code}">
+                        <button type="submit" style="background: #ef4444; padding: 4px 12px; font-size: 11px; box-shadow: none;">حذف</button>
+                    </form>
+                </td>
+            </tr>
+            '''
+        table_content = f'''
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 15%;">کد کالا</th>
+                    <th style="width: 50%;">نام کالا</th>
+                    <th style="width: 20%;">تاریخ افزودن</th>
+                    <th style="width: 15%;">عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+        '''
+    else:
+        table_content = '<div class="message message-error">لیست سیاه کالا خالی است.</div>'
+
+    nav_html = build_nav("product-blacklist")
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="fa">
+    <head>
+        <meta charset="UTF-8">
+        <title>لیست سیاه کالا</title>
+        {BASE_CSS}
+    </head>
+    <body>
+    <div class="container">
+        {nav_html}
+
+        <h1>مدیریت لیست سیاه کالا (Product Blacklist)</h1>
+        <p>کالاهای این لیست در محاسبه پورسانت نادیده گرفته می‌شوند.</p>
+
+        <!-- باکس فرم‌ها -->
+        <div style="background: rgba(255,255,255,0.6); padding: 20px; border-radius: 15px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
+            <div style="display: flex; gap: 30px; flex-wrap: wrap;">
+                
+                <!-- فرم افزودن دستی (دو باکسه) -->
+                <div style="flex: 2; min-width: 350px;">
+                    <h2>افزودن دستی کالا</h2>
+                    <form action="/product-blacklist/add" method="post" class="form-row" style="display: flex; gap: 10px; align-items: flex-end;">
+                        
+                        <div style="flex: 1;">
+                            <label style="display:block; margin-bottom:5px;">کد کالا <span style="color:red">*</span></label>
+                            <input list="products_list" name="code" type="text" placeholder="کد را وارد یا انتخاب کنید" required 
+                                   style="width: 100%;">
+                            <datalist id="products_list">
+                                {datalist_options}
+                            </datalist>
+                        </div>
+
+                        <div style="flex: 2;">
+                            <label style="display:block; margin-bottom:5px;">نام کالا (اختیاری)</label>
+                            <input type="text" name="name" placeholder="نام کالا را تایپ کنید..." style="width: 100%;">
+                        </div>
+
+                        <div style="flex: 0 0 auto;">
+                             <button type="submit" style="margin-bottom: 2px;">افزودن</button>
+                        </div>
+                    </form>
+                    <small style="color: #64748b;">اگر نام را وارد نکنید، سیستم سعی می‌کند آن را از فایل کالاها پیدا کند.</small>
+                </div>
+
+                <!-- فرم آپلود -->
+                <div style="flex: 1; min-width: 300px; border-right: 1px solid #cbd5e1; padding-right: 30px;">
+                    <h2>آپلود اکسل (کلی)</h2>
+                    <form action="/product-blacklist/upload" method="post" enctype="multipart/form-data" class="form-row" style="display: flex; gap: 10px; align-items: flex-end;">
+                        <div style="width:100%">
+                             <label style="display:block; margin-bottom:5px;">فایل اکسل</label>
+                             <input type="file" name="file" accept=".xlsx" required>
+                        </div>
+                        <button type="submit" style="background: linear-gradient(135deg, #059669, #10b981); margin-bottom: 2px;">آپلود</button>
+                    </form>
+                    <small>فایل اکسل باید ستونی به نام <b>ProductCode</b> داشته باشد.</small>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- جدول -->
+        <div class="table-wrapper">
+            {table_content}
+        </div>
+
+    </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
+
+
+@app.post("/product-blacklist/add")
+async def add_to_product_blacklist(request: Request):
+    form = await request.form()
+    code = form.get("code")
+
+    if code:
+        norm_code = canonicalize_code(code)
+        if norm_code:
+            current_set = load_product_blacklist_set()
+            current_set.add(norm_code)
+            save_product_blacklist(list(current_set))
+
+    return RedirectResponse(url="/product-blacklist", status_code=303)
+
+
+@app.post("/product-blacklist/delete")
+async def delete_from_product_blacklist(request: Request):
+    form = await request.form()
+    code_to_del = form.get("code")
+
+    if code_to_del:
+        norm_del = canonicalize_code(code_to_del)
+        current_set = load_product_blacklist_set()
+        if norm_del in current_set:
+            current_set.remove(norm_del)
+            save_product_blacklist(list(current_set))
+
+    return RedirectResponse(url="/product-blacklist", status_code=303)
+
+
+@app.post("/product-blacklist/upload")
+async def upload_product_blacklist(file: UploadFile = File(...)):
+    contents = await file.read()
+    try:
+        df_new = pd.read_excel(io.BytesIO(contents))
+        # پیدا کردن ستون مناسب
+        target_col = None
+        for c in df_new.columns:
+            if "code" in str(c).lower() or "کد" in str(c):
+                target_col = c
+                break
+
+        if target_col:
+            new_codes = set()
+            for val in df_new[target_col]:
+                c = canonicalize_code(val)
+                if c:
+                    new_codes.add(c)
+            save_product_blacklist(list(new_codes))
+
+    except Exception as e:
+        print("Upload Error:", e)
+
+    return RedirectResponse(url="/product-blacklist", status_code=303)
