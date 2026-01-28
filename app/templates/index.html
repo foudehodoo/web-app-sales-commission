@@ -1,4 +1,6 @@
+<!-- templates/index.html -->
 {% extends "base.html" %}
+
 {% block content %}
 <form action="/upload-all" method="post" enctype="multipart/form-data">
     <!-- باکس راهنمای هوشمند زمانی و CRM -->
@@ -197,7 +199,9 @@
         </div>
     </div>
 </form>
+{% endblock %}
 
+{% block scripts %}
 <!-- اسکریپت مربوط به باز و بسته کردن راهنماها -->
 <script>
     document.addEventListener('DOMContentLoaded', function () {

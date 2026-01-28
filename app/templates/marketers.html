@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>مدیریت لیست سفید بازاریاب‌ها</h1>
+<p style="font-size:13px; color:#555;">فقط فروش‌هایی محاسبه می‌شوند که نام بازاریاب آن‌ها در این لیست باشد.</p>
+
+<div class="upload-grid">
+    <!-- کارت افزودن دستی -->
+    <div class="upload-card">
+        <div class="upload-card-title">افزودن بازاریاب جدید</div>
+        <form action="/marketers/add" method="post" style="display:flex; gap:10px;">
+            <input type="text" name="new_marketer" placeholder="نام بازاریاب" required style="flex:1;">
+            <button type="submit" class="pill-button">افزودن</button>
+        </form>
+
+        <hr style="margin: 15px 0;">
+
+        <div class="upload-card-title">آپلود اکسل بازاریاب‌ها</div>
+        <form action="/marketers/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".xlsx" required style="font-size:12px;">
+            <button type="submit" class="pill-button" style="margin-top:5px;">آپلود و جایگزینی</button>
+        </form>
+        <p style="font-size:11px; color:#888; margin-top:5px;">فایل اکسل باید ستونی به نام MarketerName یا "نام
+            بازاریاب" داشته باشد.</p>
+    </div>
+
+    <!-- جدول لیست -->
+    <div class="upload-card">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>نام بازاریاب</th>
+                        <th>حذف</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if marketers_list %}
+                    {% for name in marketers_list %}
+                    <tr>
+                        <td>{{ name }}</td>
+                        <td style="width: 80px; text-align: center;">
+                            <form action="/marketers/delete" method="post" style="margin:0;">
+                                <input type="hidden" name="marketer_name" value="{{ name }}">
+                                <button type="submit"
+                                    style="background:none; border:none; cursor:pointer; color:red; font-size:16px;">&times;</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan='2' style='text-align:center; color:#999;'>هیچ بازاریابی تعریف نشده است.</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<a class="footer-link" href="/">بازگشت به خانه</a>
+{% endblock %}

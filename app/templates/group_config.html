@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
+
+    {% if success_message %}
+    <div class="message message-success">
+        {{ success_message }}
+    </div>
+    {% endif %}
+
+    {% if error_message %}
+    <div class="message message-error">
+        {{ error_message }}
+    </div>
+    {% endif %}
+
+    <p>
+        این صفحه مخصوص این است که یک‌بار گروه‌های کالا را با درصد پورسانت، مهلت تسویه و نقدی بودن تعریف کنی.
+        بعداً در صفحهٔ محاسبه پورسانت، این گروه‌ها در منوی کشویی «گروه کالا» استفاده می‌شوند.
+    </p>
+
+    <form action="/group-config" method="post">
+        <div class="table-wrapper">
+            <table>
+                <tr>
+                    <th>نام گروه کالا</th>
+                    <th>درصد پورسانت (%)</th>
+                    <th>مهلت تسویه (روز)</th>
+                    <th>نقدی؟</th>
+                </tr>
+                <tbody id="group-config-body">
+                    {% for row in group_rows %}
+                    <tr>
+                        <td><input type="text" name="cfg_group" value="{{ row.name }}" /></td>
+                        <td><input type="number" step="0.01" name="cfg_percent" value="{{ row.percent }}"
+                                placeholder="مثلاً 2 برای 2٪" /></td>
+                        <td><input type="number" step="1" name="cfg_due_days" value="{{ row.due_days }}"
+                                placeholder="مثلاً 7، 30، 90" /></td>
+                        <td class="checkbox-center">
+                            <input type="checkbox" name="cfg_is_cash" value="{{ row.idx }}" {% if row.is_cash
+                                %}checked{% endif %} />
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <br />
+        <button type="button" onclick="addGroupRow()">➕ افزودن سطر جدید</button>
+        &nbsp;
+        <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
+    </form>
+
+    <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function addGroupRow() {
+        const tbody = document.getElementById('group-config-body');
+        if (!tbody) return;
+        const idx = tbody.querySelectorAll('tr').length;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+        <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
+        <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
+        <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
+        <td class="checkbox-center">
+            <input type="checkbox" name="cfg_is_cash" value="${idx}" />
+        </td>
+    `;
+        tbody.appendChild(row);
+    }
+</script>
+{% endblock %}

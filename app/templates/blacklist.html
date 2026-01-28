@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link href="{{ url_for('static', path='/style.css') }}" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <!-- به جای {{ nav_html | safe }} -->
+        {% include 'navbar.html' %}
+
+        <div class="page-header">
+            <h1>مدیریت لیست سیاه</h1>
+            <a href="/upload-blacklist" class="pill-button">آپلود لیست جدید</a>
+        </div>
+        <div class="upload-card">
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 100px;">کد مشتری</th>
+                            <th>نام مشتری</th>
+                            <th style="width: 150px;">تاریخ افزودن</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if not data_records %}
+                        <!-- اگر لیستی وجود نداشت -->
+                        <tr>
+                            <td colspan="3" style="text-align:center; padding:20px; color:#6b7280;">
+                                لیست سیاه خالی است یا فایلی وجود ندارد.
+                            </td>
+                        </tr>
+                        {% else %}
+                        <!-- حلقه روی داده‌ها -->
+                        {% for row in data_records %}
+                        <tr>
+                            <td style="direction: ltr; text-align: center;">
+                                {{ row.CustomerCode }}
+                            </td>
+                            <td>
+                                {{ row.CustomerName }}
+                            </td>
+                            <td style="direction: ltr; text-align: center; font-size:11px; color:#666;">
+                                <!-- منطق انتخاب تاریخ -->
+                                {{ row.get('Date Added') or row.get('DateAdded') or '' }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <a class="footer-link" href="/">بازگشت به خانه</a>
+    </div>
+</body>
+
+</html>

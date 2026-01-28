@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>عملیات عطف کد به مشتری انجام شد ✅</h1>
+<div style="background: #f0fdf4; padding: 20px; border-radius: 8px; border: 1px solid #10b981; margin-bottom: 20px;">
+    <h3>گزارش تغییرات</h3>
+
+    {% if newly_added %}
+    <p style='color:green;'>✅ <b>{{ newly_added|length }} مشتری جدید اضافه شدند.</b></p>
+    {% endif %}
+
+    {% if updated_codes %}
+    <p style='color:blue;'>🔄 <b>{{ updated_codes|length }} مشتری بروزرسانی شدند:</b></p>
+    <ul>
+        {% for item in updated_codes %}
+        <li>{{ item }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if not newly_added and not updated_codes %}
+    <p style='color:gray;'>تغییری در لیست کدها ایجاد نشد (همه موارد تکراری یا بدون کد بودند).</p>
+    {% endif %}
+
+    <div style="margin-top:15px;">
+        <a href="/download-bind-file" class="pill-button"
+            style="background-color: #059669; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block;">
+            📥 دانلود فایل به‌روزرسانی شده
+        </a>
+    </div>
+</div>
+<a href="/bind-codes">بازگشت و پردازش فایل جدید</a>
+{% endblock %}

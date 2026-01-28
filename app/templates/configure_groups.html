@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}تنظیم گروه‌ها و پورسانت{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
+    <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{{ group_col }}</b>) موارد زیر را پر کن:</p>
+
+    {% if history_found %}
+    <div class="message message-success">فایل سوابق با موفقیت دریافت شد و در محاسبات لحاظ خواهد شد.</div>
+    {% endif %}
+
+    <!-- بقیه کد همون طور که هست... -->
+    <ul style="font-size:12px; color:#4b5563;">
+        <li>ستون <b>گروه کالا</b> از روی صفحهٔ «تعریف گروه‌های کالا (پیش‌فرض)» خوانده می‌شود.</li>
+        <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم
+            هست).</li>
+    </ul>
+
+    <form action="/calculate-commission" method="post">
+        <!-- بقیه فرم... -->
+        <input type="hidden" name="reactivation_days" value="{{ reactivation_days }}" />
+
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>کد/گروه کالا + نام</th>
+                        <th>گروه کالا (از پیش‌فرض)</th>
+                        <th>درصد پورسانت (%)</th>
+                        <th>مهلت تسویه (روز)</th>
+                        <th>اولویت نقدی</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in group_rows %}
+                    <tr>
+                        <td>{{ row.display_text }}</td>
+                        <td>
+                            <input type="hidden" name="group_name" value="{{ row.key_str }}" />
+                            <select name="group_category" onchange="onCategoryChange(this)">
+                                <option value="">-- انتخاب کن --</option>
+                                {% for cat_name, cfg in default_group_cfg.items() %}
+                                <option value="{{ cat_name }}" {% if cat_name==row.selected_category %}selected{% endif
+                                    %}>
+                                    {{ cat_name }} | {{ "%.2f"|format((cfg.percent or 0) * 100) }}٪
+                                    {% if cfg.due_days %}| {{ cfg.due_days }} روز{% endif %}
+                                    {% if cfg.is_cash %}| نقدی{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                        <td>
+                            <input type="number" step="0.01" name="group_percent" placeholder="مثلاً 2 برای 2٪"
+                                value="{{ row.pre_percent }}" />
+                        </td>
+                        <td>
+                            <input type="number" step="1" name="group_due_days" placeholder="مثلاً 7، 30، 90"
+                                value="{{ row.pre_due_days }}" />
+                        </td>
+                        <td class="checkbox-center">
+                            <input type="checkbox" name="cash_group" value="{{ row.key_str }}" {% if row.pre_is_cash
+                                %}checked{% endif %} />
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin: 10px 0;">
+            <label>
+                <input type="checkbox" name="apply_balances" value="1" />
+                اعمال مانده‌های حساب مشتریان به محاسبات (کسر از پورسانت/اضافه به طلب)
+            </label>
+        </div>
+
+        <div class="form-row">
+            <label>
+                <input type="checkbox" name="use_chart" value="1" />
+                استفاده از نمودار مشتریان (نیاز به اینترنت - Chart.js)
+            </label>
+        </div>
+
+        <button type="submit">محاسبه پورسانت</button>
+    </form>
+    <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // دریافت داده‌های JSON از پایتون
+    const CATEGORY_CONFIG = {{ js_cfg_json | safe }};
+
+    function onCategoryChange(sel) {
+        const code = sel.value;
+        if (!code) return;
+
+        const cfg = CATEGORY_CONFIG[code];
+        if (!cfg) return;
+
+        const row = sel.closest('tr');
+        if (!row) return;
+
+        const percentInput = row.querySelector('input[name="group_percent"]');
+        const dueInput = row.querySelector('input[name="group_due_days"]');
+        const cashCheckbox = row.querySelector('input[name="cash_group"]');
+
+        if (percentInput) {
+            percentInput.value = cfg.percent != null ? cfg.percent : "";
+        }
+        if (dueInput) {
+            if (cfg.due_days != null && cfg.due_days !== undefined) {
+                dueInput.value = cfg.due_days;
+            } else {
+                dueInput.value = "";
+            }
+        }
+        if (cashCheckbox) {
+            cashCheckbox.checked = !!cfg.is_cash;
+        }
+    }
+</script>
+{% endblock %}

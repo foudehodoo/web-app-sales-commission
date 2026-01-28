@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>تخصیص کالا به گروه</h1>
+
+    <p>
+        در این تب، کد و نام کالاها را (از روی آخرین فایل فروش یا به‌صورت دستی) می‌بینی و برای هر کالا
+        یک «گروه کالا» از لیست پیش‌فرض‌ها انتخاب می‌کنی.
+        این مپ در <code>product_group_map.xlsx</code> ذخیره می‌شود و در محاسبهٔ پورسانت برای
+        پر کردن خودکار گروه کالا استفاده می‌شود.
+    </p>
+
+    {% if info_message %}
+    <p class="message {% if info_type == 'error' %}message-error{% endif %}">
+        {{ info_message|safe }}
+    </p>
+    {% endif %}
+
+    <form action="/group-items-save" method="post">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>کد کالا</th>
+                        <th>نام کالا</th>
+                        <th>گروه کالا</th>
+                    </tr>
+                </thead>
+                <tbody id="product-group-body">
+                    {% for row in product_rows %}
+                    <tr>
+                        <td>
+                            <input type="text" name="prod_code" value="{{ row.code }}" />
+                        </td>
+                        <td>
+                            <input type="text" name="prod_name" value="{{ row.name }}" />
+                        </td>
+                        <td>
+                            <select name="prod_group">
+                                <option value="">-- بدون گروه --</option>
+                                {% for opt in group_options %}
+                                <option value="{{ opt.value }}" {% if opt.value==row.current_group %}selected{% endif
+                                    %}>
+                                    {{ opt.label }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <br />
+        <button type="button" onclick="addProductRow()">➕ افزودن سطر جدید</button>
+        &nbsp;
+        <button type="submit">ذخیره تخصیص‌ها در product_group_map.xlsx</button>
+    </form>
+
+    <hr />
+
+    <h2>مپ فعلی کالا → گروه</h2>
+    {% if current_map_html %}
+    <div class="table-wrapper">
+        {{ current_map_html|safe }}
+    </div>
+    {% else %}
+    <p>فعلاً مپی برای کالاها ثبت نشده است.</p>
+    {% endif %}
+
+    <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const GROUP_OPTIONS_HTML = `
+    <option value="">-- بدون گروه --</option>
+    {% for opt in group_options %}
+    <option value="{{ opt.value }}">{{ opt.label }}</option>
+    {% endfor %}
+`;
+
+    function addProductRow() {
+        const tbody = document.getElementById('product-group-body');
+        if (!tbody) return;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+        <td>
+            <input type="text" name="prod_code" value="" placeholder="کد کالا" />
+        </td>
+        <td>
+            <input type="text" name="prod_name" value="" placeholder="نام کالا (اختیاری)" />
+        </td>
+        <td>
+            <select name="prod_group">
+                ${GROUP_OPTIONS_HTML}
+            </select>
+        </td>
+    `;
+        tbody.appendChild(row);
+    }
+</script>
+{% endblock %}

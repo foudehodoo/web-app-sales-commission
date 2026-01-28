@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>عملیات با موفقیت انجام شد ✅</h1>
+<p>فایل اکسل حاوی کدهای مشتری با موفقیت ساخته و ذخیره شد.</p>
+
+<div style="background: #ecfdf5; padding: 20px; border-radius: 8px; border: 1px solid #10b981; margin-bottom: 20px;">
+    <h3>📂 نام فایل: <b>{{ filename }}</b></h3>
+    <p>این فایل در کنار فایل‌های اجرایی برنامه ذخیره شده است.</p>
+    <a href="/download-generated-file" class="pill-button"
+        style="background-color: #059669; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block; margin-top: 10px;">
+        دانلود فایل ساخته شده
+    </a>
+</div>
+
+<a href="/direct-download-codes">بازگشت و ساخت فایل جدید</a>
+{% endblock %}

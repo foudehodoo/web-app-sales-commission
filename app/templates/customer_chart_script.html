@@ -1,0 +1,122 @@
+<!-- templates/customer_chart_script.html -->
+<script>
+    (function () {
+        let chartInstance = null;
+
+        function closeModal() {
+            const modal = document.getElementById('customer-modal');
+            if (modal) modal.classList.add('modal-hidden');
+        }
+
+        function openModal() {
+            const modal = document.getElementById('customer-modal');
+            if (modal) modal.classList.remove('modal-hidden');
+        }
+
+        // کلیک روی اسم مشتری
+        document.addEventListener('click', function (ev) {
+            const link = ev.target.closest('.customer-link');
+            if (!link) return;
+            ev.preventDefault();
+
+            const code = link.getAttribute('data-customer-code') || '';
+            const name = link.getAttribute('data-customer-name') || '';
+
+            if (!code) {
+                alert('کد مشتری مشخص نیست.');
+                return;
+            }
+
+            fetch('/customer-stats?customer_code=' + encodeURIComponent(code))
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+
+                    document.getElementById('modal-customer-title').textContent =
+                        data.customerName || name || 'مشتری بدون نام';
+                    document.getElementById('modal-customer-subtitle').textContent =
+                        'کد مشتری: ' + (data.customerCode || code);
+                    document.getElementById('total-amount').textContent =
+                        (data.totals.amount || 0).toLocaleString('fa-IR');
+                    document.getElementById('total-paid').textContent =
+                        (data.totals.paid || 0).toLocaleString('fa-IR');
+                    document.getElementById('total-remaining').textContent =
+                        (data.totals.remaining || 0).toLocaleString('fa-IR');
+
+                    const points = data.points || [];
+                    const labels = points.map(p => p.date || '');
+                    const amount = points.map(p => p.amount || 0);
+                    const paid = points.map(p => p.paid || 0);
+                    const remaining = points.map(p => p.remaining || 0);
+
+                    const canvas = document.getElementById('customer-chart');
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+
+                    if (chartInstance) {
+                        chartInstance.destroy();
+                    }
+
+                    chartInstance = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                { label: 'خرید', data: amount, tension: 0.2 },
+                                { label: 'تسویه', data: paid, tension: 0.2 },
+                                { label: 'مانده', data: remaining, tension: 0.2 }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: { mode: 'index', intersect: false },
+                            scales: {
+                                y: {
+                                    ticks: {
+                                        callback: function (v) {
+                                            try { return v.toLocaleString('fa-IR'); }
+                                            catch (e) { return v; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    openModal();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('خطا در دریافت اطلاعات مشتری.');
+                });
+        });
+
+        // بستن مودال
+        document.addEventListener('click', function (ev) {
+            const modal = document.getElementById('customer-modal');
+            if (!modal || modal.classList.contains('modal-hidden')) return;
+
+            const closeBtn = document.getElementById('modal-close-btn');
+            if (ev.target === closeBtn || (closeBtn && closeBtn.contains(ev.target))) {
+                closeModal();
+                return;
+            }
+
+            if (ev.target === modal) {
+                closeModal();
+                return;
+            }
+        });
+
+        // بستن با ESC
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') {
+                closeModal();
+            }
+        });
+    })();
+</script>

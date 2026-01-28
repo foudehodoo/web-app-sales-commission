@@ -1,0 +1,12 @@
+<!-- templates/navbar.html -->
+<div class="navbar">
+    <a href="/" class="{{ 'active' if active_tab == 'main' else '' }}">محاسبه پورسانت</a>
+    <a href="/marketers" class="{{ 'active' if active_tab == 'marketers' else '' }}">مدیریت بازاریاب‌ها</a>
+    <a href="/blacklist" class="{{ 'active' if active_tab == 'blacklist' else '' }}">لیست سیاه مشتریان</a>
+    <a href="/product-blacklist" class="{{ 'active' if active_tab == 'product-blacklist' else '' }}">لیست سیاه کالا</a>
+    <a href="/bind-codes" class="{{ 'active' if active_tab == 'bind' else '' }}">عطف کد به مشتری</a>
+    <a href="/fix-unresolved" class="{{ 'active' if active_tab == 'fix' else '' }}">رفع اشکال کدها</a>
+    <a href="/group-config" class="{{ 'active' if active_tab == 'config' else '' }}">تعریف گروه‌های کالا</a>
+    <a href="/group-items" class="{{ 'active' if active_tab == 'items' else '' }}">تخصیص کالا به گروه</a>
+    <a href="/customer-balances" class="{{ 'active' if active_tab == 'balances' else '' }}">مدیریت مانده مشتریان</a>
+</div>

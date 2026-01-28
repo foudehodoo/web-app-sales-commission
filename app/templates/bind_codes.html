@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="upload-card">
+    <div class="upload-card-title">بارگذاری فایل‌های پرداخت و چک</div>
+    <p>
+        در این بخش فایل‌های پرداخت و چک را آپلود کنید تا سیستم کدهای مشتری را استخراج کرده و
+        فایل اکسل مربوطه را برای شما تولید کند.
+    </p>
+    <form action="/process-bind-codes" method="post" enctype="multipart/form-data">
+        <div class="form-row">
+            <label>فایل پرداخت‌ها (Payments):</label><br />
+            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
+        </div>
+        <div class="form-row">
+            <label>فایل چک‌ها (Checks) - اختیاری:</label><br />
+            <input type="file" name="checks_file" accept=".xlsx,.xls" />
+        </div>
+        <button type="submit">پردازش و دانلود فایل اکسل</button>
+    </form>
+</div>
+<a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
+{% endblock %}

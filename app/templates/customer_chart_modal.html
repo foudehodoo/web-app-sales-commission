@@ -1,0 +1,24 @@
+<!-- templates/customer_chart_modal.html -->
+<div id="customer-modal" class="modal-backdrop modal-hidden">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div>
+                <div class="modal-title" id="modal-customer-title"></div>
+                <div class="modal-subtitle" id="modal-customer-subtitle"></div>
+            </div>
+            <button type="button" class="modal-close-btn" id="modal-close-btn">بستن</button>
+        </div>
+        <div class="modal-body">
+            <div style="height:260px;">
+                <canvas id="customer-chart"></canvas>
+            </div>
+            <div class="modal-totals">
+                جمع خرید: <strong id="total-amount"></strong>
+                &nbsp;|&nbsp;
+                جمع تسویه: <strong id="total-paid"></strong>
+                &nbsp;|&nbsp;
+                مانده: <strong id="total-remaining"></strong>
+            </div>
+        </div>
+    </div>
+</div>

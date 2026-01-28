@@ -1,0 +1,87 @@
+<!-- templates/commission_results.html -->
+{% extends "base.html" %}
+
+{% block head_extra %}
+{% if use_chart %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<h1>نتیجه محاسبه پورسانت</h1>
+
+<!-- کارت‌های خلاصه -->
+<div class="summary-grid">
+    <div class="summary-card summary-sales">
+        <div class="label">فروش‌ها</div>
+        <div class="value">تعداد ردیف‌ها: {{ "{:,}".format(sales_rows) }}</div>
+        <div class="value">جمع مبلغ فروش‌ها: {{ sales_sum | format_number }}</div>
+    </div>
+
+    <div class="summary-card summary-payments">
+        <div class="label">پرداخت‌ها</div>
+        <div class="value">تعداد ردیف‌ها: {{ pay_rows | format_number }}</div>
+        <div class="value">جمع مبلغ پرداخت‌ها: {{ pay_sum | format_number }}</div>
+    </div>
+
+    <div class="summary-card summary-checks">
+        <div class="label">چک‌ها</div>
+        <div class="value">تعداد ردیف‌ها: {{ chk_rows | format_number }}</div>
+        <div class="value">جمع مبلغ چک‌ها: {{ chk_sum | format_number }}</div>
+    </div>
+
+    <div class="summary-card summary-commission">
+        <div class="label">پورسانت کل</div>
+        <div class="value">{{ total_commission | format_number }}</div>
+    </div>
+</div>
+
+<hr />
+
+<!-- جدول فاکتورها -->
+<h2>جزئیات فاکتورها و پورسانت هر فاکتور</h2>
+<div class="table-wrapper">
+    {{ invoices_table_html | safe }}
+</div>
+
+<!-- بخش‌های Debug -->
+{{ debug_names_html | safe }}
+{{ debug_checks_html | safe }}
+
+<hr />
+
+<!-- جدول فروشندگان -->
+<h2>پورسانت نهایی به تفکیک فروشنده</h2>
+<div class="table-wrapper">
+    {{ salesperson_table_html | safe }}
+</div>
+
+<a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
+
+<!-- مودال نمودار (فقط اگر فعال باشد) -->
+{% if use_chart %}
+{% include 'customer_chart_modal.html' %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<!-- اسکریپت Debug Toggle -->
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        var buttons = document.querySelectorAll('[data-toggle="debug"]');
+        buttons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var targetId = btn.getAttribute('data-target');
+                var panel = document.getElementById(targetId);
+                if (!panel) return;
+                panel.classList.toggle('debug-hidden');
+            });
+        });
+    });
+</script>
+
+<!-- اسکریپت نمودار (فقط اگر فعال باشد) -->
+{% if use_chart %}
+{% include 'customer_chart_script.html' %}
+{% endif %}
+{% endblock %}

@@ -1,19 +1,25 @@
+<!-- templates/base.html -->
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 
 <head>
     <meta charset="utf-8" />
     <title>{{ title or "محاسبه پورسانت فروش" }}</title>
-    {{ base_css|safe }}
+    <!-- لینک‌دهی مستقیم به فایل استایل -->
+    <link href="{{ url_for('static', path='/style.css') }}" rel="stylesheet">
 </head>
 
 <body>
     <div class="container">
-        {{ nav_html|safe }}
+        <!-- فراخوانی ماژولار نوار ناوبری -->
+        <!-- توجه: فایل navbar.html باید در پوشه templates وجود داشته باشد -->
+        {% include 'navbar.html' %}
 
+        <!-- محل قرارگیری محتوای صفحات فرزند -->
         {% block content %}{% endblock %}
     </div>
 
+    <!-- محل قرارگیری اسکریپت‌های صفحات فرزند -->
     {% block scripts %}{% endblock %}
 </body>
 

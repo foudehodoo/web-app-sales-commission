@@ -1,0 +1,39 @@
+<!-- templates/upload_payments_checks.html -->
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+    <meta charset="utf-8" />
+    <title>دریافت فایل‌های پرداخت و چک</title>
+    <!-- لود کردن استایل از پوشه استاتیک -->
+    <link href="{{ url_for('static', path='/style.css') }}" rel="stylesheet">
+
+    <script>
+        function showLoading() {
+            document.getElementById('loading-msg').style.display = 'block';
+            document.getElementById('result-area').style.display = 'none';
+        }
+    </script>
+</head>
+
+<body>
+    <div class="container">
+        <!-- فراخوانی منوبار که در فایل جداگانه ساختیم -->
+        {% include 'navbar.html' %}
+
+        <h1>مرحله ۱: بارگذاری فایل‌های پرداخت و چک</h1>
+        <p>
+            در این مرحله فایل‌های مربوط به پرداخت‌ها و چک‌ها را آپلود کنید.
+            سیستم تلاش می‌کند نام مشتریان را با دیتابیس مانده‌ها تطبیق دهد و کد مشتری را استخراج کند.
+        </p>
+
+        <div class="{{ 'active' if active_tab == 'fix' else '' }}">رفع اشکال کدها</a>
+            <a href="/group-config" class="{{ 'active' if active_tab == 'config' else '' }}">تعریف گروه‌های کالا</a>
+            <a href="/group-items" class="{{ 'active' if active_tab == 'items' else '' }}">تخصیص کالا به گروه</a>
+            <a href="/customer-balances" class="{{ 'active' if active_tab == 'balances' else '' }}">مدیریت مانده
+                مشتریان</a>
+        </div>
+    </div>
+</body>
+
+</html>

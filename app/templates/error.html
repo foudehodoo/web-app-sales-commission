@@ -1,0 +1,23 @@
+<!-- templates/error.html -->
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>خطا</title>
+    <!-- استایل ساده برای نمایش خطا -->
+    <style>
+        body { font-family: Tahoma, Arial, sans-serif; padding: 50px; text-align: center; background-color: #f8f9fa; }
+        .error-box { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); display: inline-block; }
+        h3 { color: #dc3545; margin-bottom: 20px; }
+        a { text-decoration: none; background-color: #007bff; color: white; padding: 10px 20px; border-radius: 5px; }
+        a:hover { background-color: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="error-box">
+        <h3>{{ message }}</h3>
+        <a href="{{ back_url }}">بازگشت</a>
+    </div>
+</body>
+</html>

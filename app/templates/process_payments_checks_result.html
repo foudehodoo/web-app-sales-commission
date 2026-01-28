@@ -1,0 +1,45 @@
+<!-- templates/process_payments_checks_result.html -->
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+    <meta charset="utf-8" />
+    <title>نتایج استخراج کدها</title>
+    <link href="{{ url_for('static', path='/style.css') }}" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        {% include 'navbar.html' %}
+
+        <h1>نتایج تطبیق کدهای مشتری</h1>
+        <p>
+            فایل‌ها با موفقیت پردازش شدند. در جدول زیر وضعیت استخراج کد مشتری برای هر پرداخت نمایش داده شده است.
+        </p>
+
+        <!-- دکمه دانلود فقط در صورتی نمایش داده می‌شود که نتیجه‌ای وجود داشته باشد -->
+        {% if has_results %}
+        <div style="margin-bottom: 20px;">
+            <a href="/download-codes-excel" class="pill-button"
+                style="background-color: #10b981; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px;">
+                📥 ساخت اکسل کد ها
+            </a>
+        </div>
+        {% endif %}
+
+        <div class="table-wrapper">
+            <!-- 
+                نکته مهم: از فیلتر safe استفاده می‌کنیم چون table_html
+                یک رشته HTML کامل است که توسط Pandas ساخته شده و 
+                نمی‌خواهیم Jinja2 کاراکترهای < > آن را به &lt; &gt; تبدیل کند.
+            -->
+            {{ table_html | safe }}
+        </div>
+
+        <div style="margin-top: 20px;">
+            <a href="/upload-payments-checks">آپلود فایل‌های جدید</a>
+        </div>
+    </div>
+</body>
+
+</html>

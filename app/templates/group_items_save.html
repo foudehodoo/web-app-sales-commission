@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>تخصیص کالا به گروه</h1>
+
+{% if success %}
+<div class="message message-success">
+    تخصیص کالاها به گروه‌ها با موفقیت در <code>product_group_map.xlsx</code> ذخیره شد ✅
+</div>
+{% else %}
+<div class="message message-error">
+    هیچ تخصیص معتبری برای ذخیره ثبت نشد.
+</div>
+{% endif %}
+
+<h2>مپ فعلی کالا → گروه</h2>
+{% if map_html %}
+<div class="table-wrapper">
+    {{ map_html | safe }}
+</div>
+{% else %}
+<p>فعلاً مپی برای کالاها ثبت نشده است.</p>
+{% endif %}
+
+<a class="footer-link" href="/group-items">بازگشت به صفحهٔ تخصیص کالا</a>
+<br />
+<a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
+{% endblock %}

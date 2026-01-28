@@ -5,6 +5,7 @@ from datetime import timedelta
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 from app.services.sales_excel_loader import load_sales_excel
 from app.services.payments_excel_loader import load_payments_excel
@@ -30,16 +31,38 @@ import json
 
 DEFAULT_GROUP_CONFIG_PATH = "group_config.xlsx"
 PRODUCT_GROUP_MAP_PATH = "product_group_map.xlsx"
-# در بالای فایل، جایی که تنظیمات دیگر هستند
-
-
-# ------------------ مدیریت بلک لیست ------------------ #
-
-
+# مدیریت بلک لیست
 BLACKLIST_FILE = "blacklist.xlsx"
 MARKETERS_PATH = "marketers.xlsx"
 PRODUCT_BLACKLIST_PATH = "product_blacklist.xlsx"
+# نام فایل خروجی
+OUTPUT_CODES_FILENAME = "customer_codes_generated.xlsx"
 
+
+# ------------------ کانفیگ برنامه ------------------ #
+
+app = FastAPI()
+BASE_DIR = Path(__file__).resolve().parent
+templates_path = BASE_DIR / "templates"
+static_path = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
+templates = Jinja2Templates(directory=str(templates_path))
+LAST_UPLOAD = {
+    "sales": None,
+    "payments": None,
+    "checks": None,
+    "group_col": None,
+    "group_config": None,
+    "sales_result": None,
+    "payments_result": None,
+}
+SESSION_SETTINGS = {
+    "reactivation_days": 95  # مقدار پیش‌فرض
+}
+
+
+# ------------------ مدیریت بلک لیست ------------------ #
 
 def load_blacklist_sets():
     """
@@ -425,637 +448,10 @@ def name_key_for_matching(s: str) -> str:
     return norm.replace(" ", "")
 
 
-# ------------------ کانفیگ برنامه ------------------ #
-
-app = FastAPI()
-BASE_DIR = Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-LAST_UPLOAD = {
-    "sales": None,
-    "payments": None,
-    "checks": None,
-    "group_col": None,
-    "group_config": None,
-    "sales_result": None,
-    "payments_result": None,
-}
-# در بالای فایل main.py کنار سایر متغیرهای سراسری
-SESSION_SETTINGS = {
-    "reactivation_days": 95  # مقدار پیش‌فرض
-}
-
-BASE_CSS = """
-<style>
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
-    direction: rtl;
-    margin: 0;
-    min-height: 100vh;
-
-    /* گرادیانت چندلایه  */
-    background:
-        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.55) 0, transparent 55%),
-        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.35) 0, transparent 55%),
-        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.35) 0, transparent 55%),
-        linear-gradient(135deg, #eef2ff, #f9fafb 40%, #fdf2ff 100%);
-}
-
-.container {
-    max-width: 1150px;
-    margin: 32px auto;
-    background: rgba(255, 255, 255, 0.92);   /* نیمه‌شفاف برای افکت شیشه‌ای */
-    padding: 24px 32px 32px;
-    border-radius: 24px;
-    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    backdrop-filter: blur(18px);             /* اگر مرورگر پشتیبانی کند 🤌 */
-}
-
-h1 {
-    margin-top: 0;
-    color: #111827;
-    font-size: 22px;
-}
-h2 {
-    color: #111827;
-    font-size: 18px;
-    margin-top: 24px;
-}
-p {
-    color: #374151;
-    font-size: 13px;
-}
-button {
-    background: linear-gradient(135deg, #2563eb, #1d4ed8);
-    color: #ffffff;
-    border: none;
-    border-radius: 999px;
-    padding: 9px 18px;
-    font-size: 13px;
-    cursor: pointer;
-    box-shadow: 0 6px 14px rgba(37, 99, 235, 0.35);
-    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-button:hover {
-    background: linear-gradient(135deg, #1d4ed8, #1e40af);
-    transform: translateY(-1px);
-    box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
-}
-label {
-    font-weight: 600;
-    font-size: 13px;
-}
-input[type="file"],
-input[type="number"],
-input[type="text"],
-select {
-    width: 100%;
-    padding: 7px 9px;
-    border-radius: 10px;
-    border: 1px solid #d1d5db;
-    font-size: 13px;
-    box-sizing: border-box;
-    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
-    background-color: #f9fafb;
-}
-input[type="file"]:focus,
-input[type="number"]:focus,
-input[type="text"]:focus,
-select:focus {
-    outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
-    background-color: #ffffff;
-}
-.form-row {
-    margin-bottom: 14px;
-}
-small {
-    font-size: 11px;
-    color: #6b7280;
-}
-
-/* ---------------- نوار بالای صفحه (سه تب اصلی) ---------------- */
-
-.navbar {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 18px;
-    border-radius: 999px;
-    background: #f3f4ff;
-    padding: 4px;
-}
-.navbar a {
-    flex: 0 0 auto;
-    padding: 7px 14px;
-    border-radius: 999px;
-    font-size: 13px;
-    color: #4b5563;
-    text-decoration: none;
-    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-}
-.navbar a:hover {
-    background: #e5e7ff;
-    color: #111827;
-}
-.navbar a.active {
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: #ffffff;
-    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.45);
-}
-
-/* ---------------- کارت‌های راهنمای صفحه اصلی ---------------- */
-
-.summary-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 14px;
-    margin: 18px 0 10px;
-}
-.summary-card {
-    position: relative;
-    background: rgba(248, 250, 252, 0.92);
-    border-radius: 18px;
-    padding: 12px 14px 10px 14px;
-    border: 1px solid rgba(226, 232, 240, 0.95);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-.summary-card::before {
-    content: "";
-    position: absolute;
-    inset-inline-start: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-}
-.summary-sales::before {
-    background: linear-gradient(180deg, #2563eb, #60a5fa);
-}
-.summary-payments::before {
-    background: linear-gradient(180deg, #059669, #34d399);
-}
-.summary-checks::before {
-    background: linear-gradient(180deg, #d97706, #fbbf24);
-}
-.summary-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
-    border-color: rgba(148, 163, 184, 0.7);
-    background: rgba(255, 255, 255, 0.98);
-}
-.summary-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-}
-.summary-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.summary-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 999px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    background: #e5edff;
-}
-.summary-sales .summary-icon {
-    background: #e0ecff;
-}
-.summary-payments .summary-icon {
-    background: #dcfce7;
-}
-.summary-checks .summary-icon {
-    background: #fef3c7;
-}
-.summary-title-main {
-    font-size: 13px;
-    font-weight: 700;
-    color: #111827;
-}
-.summary-title-sub {
-    font-size: 11px;
-    color: #6b7280;
-}
-.summary-card-body {
-    margin-top: 4px;
-}
-.hint-title {
-    font-size: 11px;
-    color: #4b5563;
-    margin-bottom: 4px;
-}
-.hint-note {
-    font-size: 11px;
-    color: #9ca3af;
-    margin-top: 4px;
-}
-.pill-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-}
-.badge-pill {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    background: #eef2ff;
-    color: #3730a3;
-    white-space: nowrap;
-}
-.pill-section-title {
-    font-size: 11px;
-    font-weight: 600;
-    margin-top: 2px;
-    margin-bottom: 2px;
-    color: #4b5563;
-}
-.pill-section {
-    margin-top: 4px;
-    margin-bottom: 4px;
-}
-.pill-button {
-    border-radius: 999px;
-    border: 0;
-    padding: 3px 10px;
-    font-size: 11px;
-    background: #e5edff;
-    color: #1d4ed8;
-    cursor: pointer;
-    box-shadow: none;
-}
-.pill-button:hover {
-    background: #dbeafe;
-    transform: none;
-    box-shadow: none;
-}
-.hint-hidden {
-    display: none;
-}
-
-/* ---------------- جدول‌ها ---------------- */
-
-.table-wrapper {
-    overflow-x: auto;
-    margin-top: 8px;
-}
-.table-wrapper table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-.table-wrapper th,
-.table-wrapper td {
-    border: 1px solid #e5e7eb;
-    padding: 6px 8px;
-    text-align: right;
-    white-space: nowrap;
-}
-.table-wrapper th {
-    background: #e5f0ff;
-    color: #111827;
-    font-weight: 600;
-}
-.table-wrapper tr:nth-child(even) {
-    background: #f9fafb;
-}
-.table-wrapper tr:hover td {
-    background: #eef2ff;
-}
-
-/* ---------------- بج‌ها ---------------- */
-
-.badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-}
-.badge-priority-cash {
-    background: #ecfdf5;
-    color: #047857;
-    border: 1px solid #bbf7d0;
-}
-.badge-priority-normal {
-    background: #eff6ff;
-    color: #1d4ed8;
-    border: 1px solid #bfdbfe;
-}
-
-/* ---------------- پیام‌های موفق/خطا ---------------- */
-
-.message {
-    padding: 8px 12px;
-    border-radius: 10px;
-    font-size: 12px;
-    margin: 10px 0;
-}
-.message-success {
-    background: #ecfdf5;
-    border: 1px solid #6ee7b7;
-    color: #065f46;
-}
-.message-error {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
-}
-
-/* ---------------- تب‌های داخلی (اگر جایی استفاده شوند) ---------------- */
-
-.tabs-container {
-    margin-top: 24px;
-}
-.tab-header-row {
-    display: flex;
-    gap: 8px;
-    border-bottom: 1px solid #e5e7eb;
-    margin-bottom: 12px;
-    padding-bottom: 2px;
-}
-.tab-btn {
-    border: none;
-    background: transparent;
-    padding: 8px 14px;
-    border-radius: 999px 999px 0 0;
-    font-size: 12px;
-    color: #6b7280;
-    cursor: pointer;
-    position: relative;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-.tab-btn:hover {
-    color: #111827;
-    background: #f3f4ff;
-}
-.tab-btn.active {
-    color: #111827;
-    background: #eef2ff;
-    font-weight: 600;
-}
-.tab-btn.active::after {
-    content: "";
-    position: absolute;
-    left: 10%;
-    right: 10%;
-    bottom: -1px;
-    height: 2px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #2563eb, #7c3aed);
-}
-.tab-content {
-    margin-top: 4px;
-}
-.tab-pane {
-    display: none;
-}
-.tab-pane.active {
-    display: block;
-}
-.tab-card {
-    margin-top: 18px;
-    background: #f9fafb;
-    border-radius: 14px;
-    border: 1px solid #e5e7eb;
-    padding: 12px 14px;
-}
-
-/* -------------- دیباگ -------------- */
-
-.debug-section {
-    margin-top: 24px;
-}
-
-.debug-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-}
-
-.debug-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #111827;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.debug-toggle-btn {
-    background: #f3f4f6;
-    color: #374151;
-    border-radius: 999px;
-    padding: 5px 12px;
-    font-size: 11px;
-    border: 1px solid #e5e7eb;
-    cursor: pointer;
-}
-
-.debug-toggle-btn:hover {
-    background: #e5e7eb;
-}
-
-.debug-panel {
-    border-radius: 12px;
-    border: 1px dashed #e5e7eb;
-    padding: 10px 12px;
-    background: #f9fafb;
-    margin-bottom: 4px;
-}
-
-.debug-hidden {
-    display: none;
-}
-
-/* ردیف‌هایی از چک‌ها که متناظر در پرداخت‌ها دارند */
-.matched-check-row {
-    background-color: #ecfdf3;
-}
-
-.matched-check-row:hover {
-    background-color: #dcfce7;
-}
-
-/* ---------------- سایر ---------------- */
-
-.footer-link {
-    display: inline-block;
-    margin-top: 16px;
-    color: #2563eb;
-    text-decoration: none;
-    font-size: 13px;
-}
-.footer-link:hover {
-    text-decoration: underline;
-}
-hr {
-    border: none;
-    border-top: 1px solid #e5e7eb;
-    margin: 24px 0;
-}
-.checkbox-center {
-    text-align: center;
-}
-/* --------- modal نمودار مشتری --------- */
-.modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-}
-.modal-hidden {
-    display: none;
-}
-.modal-card {
-    background: #ffffff;
-    border-radius: 18px;
-    padding: 16px 18px 18px;
-    width: 720px;
-    max-width: 95vw;
-    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
-}
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-.modal-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #111827;
-}
-.modal-subtitle {
-    font-size: 12px;
-    color: #6b7280;
-    margin-top: 2px;
-}
-.modal-close-btn {
-    background: #f3f4f6;
-    color: #374151;
-    border-radius: 999px;
-    border: 1px solid #e5e7eb;
-    padding: 4px 9px;
-    font-size: 12px;
-    cursor: pointer;
-}
-.modal-close-btn:hover {
-    background: #e5e7eb;
-}
-.modal-body {
-    margin-top: 6px;
-}
-.modal-totals {
-    margin-top: 10px;
-    font-size: 12px;
-    color: #374151;
-}
-.modal-totals strong {
-    font-weight: 700;
-}
-/* -------- صفحه اصلی (آپلود فایل‌ها) -------- */
-
-.hero-intro {
-    margin-top: 4px;
-    margin-bottom: 18px;
-}
-
-.hero-intro h1 {
-    margin-bottom: 6px;
-}
-
-.hero-intro p {
-    font-size: 13px;
-    color: #4b5563;
-}
-
-.upload-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-    gap: 18px;
-    align-items: flex-start;
-    margin-top: 10px;
-}
-
-@media (max-width: 900px) {
-    .upload-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-.upload-card {
-    background: rgba(249, 250, 252, 0.94);
-    border-radius: 18px;
-    padding: 16px 16px 14px;
-    border: 1px solid rgba(226, 232, 240, 0.95);
-    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
-}
-
-.upload-card-light {
-    background: rgba(255, 255, 255, 0.86);
-    box-shadow: 0 10px 28px rgba(148, 163, 184, 0.20);
-}
-
-.upload-card-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #111827;
-    margin-bottom: 6px;
-}
-
-.upload-card-subtitle {
-    font-size: 12px;
-    color: #6b7280;
-    margin-bottom: 10px;
-}
-
-</style>
-"""
-
-
-def build_nav(active: str) -> str:
-    def cls(tab: str) -> str:
-        return "active" if tab == active else ""
-
-    # نکته: در خط زیر برای product-blacklist کلاس درست ست شده است
-    return f'''
-    <div class="navbar">
-        <a href="/" class="{cls("main")}">محاسبه پورسانت</a>
-        <a href="/marketers" class="{cls("marketers")}">مدیریت بازاریاب‌ها</a>
-        <a href="/blacklist" class="{cls("blacklist")}">لیست سیاه مشتریان</a>
-        <a href="/product-blacklist" class="{cls("product-blacklist")}">لیست سیاه کالا</a>
-        <a href="/bind-codes" class="{cls("bind")}">عطف کد به مشتری</a>
-        <a href="/fix-unresolved" class="{cls("fix")}">رفع اشکال کدها</a>
-        <a href="/group-config" class="{cls("config")}">تعریف گروه‌های کالا</a>
-        <a href="/group-items" class="{cls("items")}">تخصیص کالا به گروه</a>
-        <a href="/customer-balances" class="{cls("balances")}">مدیریت مانده مشتریان</a>
-    </div>
-    '''
-
-
 # --- روت‌های صفحه مدیریت بلک‌لیست ---
-
 
 @app.get("/blacklist", response_class=HTMLResponse)
 async def blacklist_page(request: Request):
-    nav_html = build_nav("blacklist")
-
     file_path = "blacklist.xlsx"
     data_records = []
 
@@ -1063,108 +459,56 @@ async def blacklist_page(request: Request):
         try:
             df = pd.read_excel(file_path)
 
-            # ---------------------------------------------------------
-            # اصلاح نمایش کدها (حذف .0 و تبدیل nan به رشته خالی)
-            # ---------------------------------------------------------
+            # --- بخش منطق (Logic) ---
             if "CustomerCode" in df.columns:
-                # استفاده از تابع canonicalize_code که قبلاً در کدتان دارید
                 df["CustomerCode"] = df["CustomerCode"].apply(
                     lambda x: canonicalize_code(x) if pd.notna(x) else ""
                 )
-
-                # اطمینان از اینکه مقادیر None یا 'nan' به رشته خالی تبدیل می‌شوند
                 df["CustomerCode"] = df["CustomerCode"].fillna(
                     "").astype(str).replace("nan", "")
 
-            # تبدیل تاریخ برای نمایش زیباتر (اختیاری)
+            # تبدیل تاریخ‌ها
             if "Date Added" in df.columns:
                 df["Date Added"] = df["Date Added"].fillna("")
-            elif "DateAdded" in df.columns:  # هندل کردن نام‌های مختلف احتمالی
+            if "DateAdded" in df.columns:
                 df["DateAdded"] = df["DateAdded"].fillna("")
 
-            # جایگزینی NaN در کل دیتافریم برای جلوگیری از خطا در تمپلیت
             df = df.fillna("")
-
             data_records = df.to_dict(orient="records")
 
         except Exception as e:
             print(f"Error loading blacklist: {e}")
             data_records = []
 
-    # رندر کردن قالب
-    # توجه: کد HTML را می‌توانید همینجا رشته کنید یا از templates استفاده کنید.
-    # در اینجا فرض بر این است که ساختار مشابه بقیه صفحات است:
-
-    html = f"""
-    <html>
-    <head>
-        <title>لیست سیاه</title>
-        {BASE_CSS}
-    </head>
-    <body>
-        <div class="container">
-            {nav_html}
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h1>مدیریت لیست سیاه</h1>
-                <a href="/upload-blacklist" class="pill-button" style="text-decoration:none;">آپلود لیست جدید</a>
-            </div>
-
-            <div class="upload-card" style="margin-top:20px;">
-                <div class="table-wrapper">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width: 100px;">کد مشتری</th>
-                                <th>نام مشتری</th>
-                                <th style="width: 150px;">تاریخ افزودن</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-    """
-
-    if not data_records:
-        html += """
-            <tr>
-                <td colspan="3" style="text-align:center; padding:20px; color:#6b7280;">
-                    لیست سیاه خالی است یا فایلی وجود ندارد.
-                </td>
-            </tr>
-        """
-    else:
-        for row in data_records:
-            # هندل کردن نام‌های احتمالی ستون تاریخ
-            date_val = row.get("Date Added") or row.get("DateAdded") or ""
-
-            html += f"""
-            <tr>
-                <td style="direction: ltr; text-align: center;">{row.get('CustomerCode', '')}</td>
-                <td>{row.get('CustomerName', '')}</td>
-                <td style="direction: ltr; text-align: center; font-size:11px; color:#666;">{date_val}</td>
-            </tr>
-            """
-
-    html += """
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <a class="footer-link" href="/">بازگشت به خانه</a>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    # --- بخش رندر (Render) ---
+    return templates.TemplateResponse(
+        # نام فایل به عنوان آرگومان اول (در نسخه‌های جدیدتر FastAPI/Starlette)
+        "blacklist.html",
+        {
+            "request": request,
+            "data_records": data_records,
+            "title": "لیست سیاه",      # عنوان صفحه
+            "active_tab": "blacklist"  # جایگزین nav_html شد
+        }
+    )
 
 
 @app.post("/upload-blacklist")
-async def upload_blacklist(file: UploadFile = File(...)):
+async def upload_blacklist(request: Request, file: UploadFile = File(...)):
     try:
         contents = await file.read()
         # فقط چک میکنیم فایل اکسل سالم باشد
         temp_df = pd.read_excel(io.BytesIO(contents))
         if "CustomerCode" not in temp_df.columns:
-            return HTMLResponse("<h3>خطا: فایل اکسل باید ستون CustomerCode داشته باشد.</h3><a href='/blacklist'>بازگشت</a>")
+            # استفاده از تمپلیت خطا به جای HTML خام
+            return templates.TemplateResponse(
+                "error.html",
+                {
+                    "request": request,
+                    "message": "خطا: فایل اکسل باید ستون CustomerCode داشته باشد.",
+                    "back_url": "/blacklist"
+                }
+            )
 
         # ذخیره روی فایل اصلی
         with open(BLACKLIST_FILE, "wb") as f:
@@ -1172,79 +516,42 @@ async def upload_blacklist(file: UploadFile = File(...)):
 
         return RedirectResponse(url="/blacklist", status_code=303)
     except Exception as e:
-        return HTMLResponse(f"<h3>خطا در آپلود: {e}</h3><a href='/blacklist'>بازگشت</a>")
+        # استفاده از تمپلیت خطا برای اکسپشن‌ها
+        return templates.TemplateResponse(
+            "error.html",
+            {
+                "request": request,
+                "message": f"خطا در آپلود: {e}",
+                "back_url": "/blacklist"
+            }
+        )
 
 # ------------------ توابع کمکی ------------------ #
 
 # ------------------ UI: مرحله جدید - دریافت فایل‌های پرداخت و چک ------------------
 
 
-@app.get("/upload-payments-checks", response_class=HTMLResponse)
+@app.get("/upload-payments-checks")
 async def upload_payments_checks_page(request: Request):
     """
     صفحه جدید برای دریافت فایل‌های پرداخت و چک و ساخت اکسل کدها.
     """
-    nav_html = build_nav("main")
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>دریافت فایل‌های پرداخت و چک</title>
-            {BASE_CSS}
-            <script>
-                function showLoading() {{
-                    document.getElementById('loading-msg').style.display = 'block';
-                    document.getElementById('result-area').style.display = 'none';
-                }}
-            </script>
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>مرحله ۱: بارگذاری فایل‌های پرداخت و چک</h1>
-                <p>
-                    در این مرحله فایل‌های مربوط به پرداخت‌ها و چک‌ها را آپلود کنید.
-                    سیستم تلاش می‌کند نام مشتریان را با دیتابیس مانده‌ها تطبیق دهد و کد مشتری را استخراج کند.
-                </p>
-                
-                <div class="upload-card">
-                    <form action="/process-payments-checks" method="post" enctype="multipart/form-data" onsubmit="showLoading()">
-                        <div class="form-row">
-                            <label>فایل پرداخت‌ها (Payments):</label><br />
-                            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
-                        </div>
-                        <div class="form-row">
-                            <label>فایل چک‌ها (Checks) - اختیاری:</label><br />
-                            <input type="file" name="checks_file" accept=".xlsx,.xls" />
-                        </div>
-                        <button type="submit">پردازش فایل‌ها</button>
-                    </form>
-                </div>
-
-                <div id="loading-msg" style="display:none; text-align:center; margin-top:20px; color:blue;">
-                    در حال پردازش فایل‌ها، لطفاً صبر کنید...
-                </div>
-
-                <div id="result-area" style="margin-top: 30px;">
-                    <!-- نتایج اینجا نمایش داده می‌شود -->
-                </div>
-                
-                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    # در اینجا فقط نام تب فعال را به تمپلیت می‌فرستیم تا کلاس active را بگیرد
+    return templates.TemplateResponse(
+        "upload_payments_checks.html",
+        {
+            "request": request,
+            "active_tab": "main"  # این متغیر در navbar.html استفاده می‌شود
+        }
+    )
 
 
-@app.post("/process-payments-checks", response_class=HTMLResponse)
+@app.post("/process-payments-checks")
 async def process_payments_checks(
     request: Request,
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None)
 ):
-    nav_html = build_nav("main")
     try:
         # 1. بارگذاری فایل‌ها
         df_pay = load_payments_excel(payments_file.file)
@@ -1253,14 +560,14 @@ async def process_payments_checks(
             df_chk = load_checks_excel(checks_file.file)
 
         # 2. ساخت مپ نام به کد از دیتابیس مانده‌ها
-        # اصلاحیه: استفاده از تابع صحیح تعریف شده در انتهای کد
         name_code_map_from_balances = build_name_code_map_from_balances()
 
         # 3. آماده‌سازی پرداخت‌ها
-        # نکته: prepare_payments نیاز به sales_df دارد که فعلاً نداریم، پس یک دیتافریم خالی می‌فرستیم
+        # نکته: آرگومان سوم که قبلا اشتباه بود، با مپ صحیح جایگزین شد
         payments_df, unresolved_items = prepare_payments(
-            df_pay, df_chk, pd.DataFrame()
+            df_pay, df_chk, name_code_map_from_balances
         )
+
         # 4. ساخت دیتافریم برای نمایش و دانلود
         result_data = []
 
@@ -1268,116 +575,80 @@ async def process_payments_checks(
         resolved_df = payments_df[payments_df["ResolvedCustomer"].notna()].copy(
         )
         if not resolved_df.empty:
-            # گروه‌بندی بر اساس کد مشتری برای جلوگیری از تکرار زیاد در نمایش
             grouped = resolved_df.groupby("ResolvedCustomer").agg({
                 "CustomerName": "first",
                 "Amount": "sum"
             }).reset_index()
-
             for _, row in grouped.iterrows():
                 result_data.append({
-                    "CustomerName": row["CustomerName"],
-                    "TotalAmount": row["Amount"],
-                    "CustomerCode": row["ResolvedCustomer"],
-                    "Status": "کد یافت شد ✅"
+                    "CustomerName": row["CustomerName"], "TotalAmount": row["Amount"],
+                    "CustomerCode": row["ResolvedCustomer"], "Status": "کد یافت شد ✅"
                 })
 
         # پردازش مواردی که کد پیدا نشد (Unresolved)
         if unresolved_items:
             unresolved_df = pd.DataFrame(unresolved_items)
-            grouped_unresolved = unresolved_df.groupby("Name").agg({
-                "Amount": "sum"
-            }).reset_index()
-
+            grouped_unresolved = unresolved_df.groupby(
+                "Name").agg({"Amount": "sum"}).reset_index()
             for _, row in grouped_unresolved.iterrows():
                 result_data.append({
-                    "CustomerName": row["Name"],
-                    "TotalAmount": row["Amount"],
-                    "CustomerCode": "",
-                    "Status": "کد یافت نشد ❌"
+                    "CustomerName": row["Name"], "TotalAmount": row["Amount"],
+                    "CustomerCode": "", "Status": "کد یافت نشد ❌"
                 })
 
-        # تبدیل به دیتافریم
         df_result = pd.DataFrame(result_data)
-
-        # ذخیره موقت در سراسری برای مرحله دانلود
         LAST_UPLOAD["payments_codes_preview"] = df_result
 
         # ساخت HTML جدول
+        table_html = "<p>داده‌ای برای نمایش وجود ندارد.</p>"
         if not df_result.empty:
             table_html = df_result.to_html(
                 index=False, border=0, classes="data-table")
-        else:
-            table_html = "<p>داده‌ای برای نمایش وجود ندارد.</p>"
 
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>نتایج استخراج کدها</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    {nav_html}
-                    <h1>نتایج تطبیق کدهای مشتری</h1>
-                    <p>
-                        فایل‌ها با موفقیت پردازش شدند. در جدول زیر وضعیت استخراج کد مشتری برای هر پرداخت نمایش داده شده است.
-                    </p>
-                    
-                    <div style="margin-bottom: 20px;">
-                        <a href="/download-codes-excel" class="pill-button" style="background-color: #10b981; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px;">
-                            📥 ساخت اکسل کد ها
-                        </a>
-                    </div>
-
-                    <div class="table-wrapper">
-                        {table_html}
-                    </div>
-
-                    <div style="margin-top: 20px;">
-                        <a href="/upload-payments-checks">آپلود فایل‌های جدید</a>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        # رندر کردن تمپلیت به جای ساخت HTML در پایتون
+        return templates.TemplateResponse(
+            "process_payments_checks_result.html",
+            {
+                "request": request,
+                "active_tab": "main",
+                "table_html": table_html,
+                "has_results": not df_result.empty,  # یک boolean برای نمایش شرطی دکمه دانلود
+            }
+        )
 
     except Exception as e:
-        # مدیریت خطا
+        # استفاده مجدد از تمپلیت خطا
         print(f"Error processing payments/checks: {e}")
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا در پردازش</h1>
-                    <p>متاسفانه خطایی رخ داد: {str(e)}</p>
-                    <a href="/upload-payments-checks">بازگشت و تلاش مجدد</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse(
+            "error.html",
+            {
+                "request": request,
+                "message": f"خطا در پردازش فایل‌ها: {str(e)}",
+                "back_url": "/upload-payments-checks"
+            }
+        )
 
 
 @app.get("/download-codes-excel")
-async def download_codes_excel():
+async def download_codes_excel(request: Request):
     """
     دانلود فایل اکسل حاوی کدهای استخراج شده.
+    در صورت عدم وجود داده، صفحه خطا را با استفاده از تمپلیت نمایش می‌دهد.
     """
     df_result = LAST_UPLOAD.get("payments_codes_preview")
 
+    # بلوک خطا: از تمپلیت error.html استفاده می‌کنیم
     if df_result is None or df_result.empty:
-        return HTMLResponse(content="<h1>خطا: داده‌ای برای دانلود وجود ندارد.</h1>")
+        return templates.TemplateResponse(
+            "error.html",
+            {
+                "request": request,
+                "message": "خطا: داده‌ای برای دانلود وجود ندارد. لطفاً ابتدا فایل‌ها را برای استخراج کدها پردازش کنید.",
+                "back_url": "/upload-payments-checks"  # لینک بازگشت به صفحه آپلود
+            }
+        )
 
+    # بلوک موفقیت: این بخش بدون تغییر باقی می‌ماند
     # ایجاد یک فایل در حافظه
     output = io.BytesIO()
 
@@ -2135,34 +1406,18 @@ def build_debug_checks_html(checks_df, payments_df=None):
 # ------------------ UI: تب ۱ – محاسبه پورسانت ------------------ #
 
 
-@app.post("/save-reactivation-days")
-async def save_reactivation_days(request: Request):
-    """
-    این مسیر مقدار reactivation_days را که توسط جاوااسکریپت قبل از آپلود فایل ارسال شده،
-    در متغیر سراسری SESSION_SETTINGS ذخیره می‌کند.
-    """
-    form = await request.form()
-    days_str = form.get("reactivation_days", "90")
-    try:
-        days = int(days_str)
-        SESSION_SETTINGS["reactivation_days"] = days
-    except ValueError:
-        pass  # اگر عدد نبود، همان مقدار قبلی یا پیش‌فرض می‌ماند
-
-    return JSONResponse(content={"status": "ok", "saved_days": SESSION_SETTINGS["reactivation_days"]})
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    nav_html = build_nav("main")
+    """
+    نمایش صفحه اصلی برنامه.
+    این تابع از تمپلیت index.html استفاده می‌کند و تب فعال را برای navbar مشخص می‌کند.
+    """
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "title": "محاسبه پورسانت فروش",
-            "nav_html": nav_html,
-            "base_css": BASE_CSS,
-            # active_tab الان استفاده نمی‌شود؛ می‌تونی حذفش کنی
+            "title": "سیستم جامع فروش",  # عنوان را هم می‌توانیم بهبود دهیم
+            "active_tab": "main"  # فقط این متغیر را برای کنترل navbar ارسال می‌کنیم
         },
     )
 
@@ -2171,164 +1426,64 @@ async def index(request: Request):
 
 @app.get("/customer-balances", response_class=HTMLResponse)
 async def customer_balances_page(request: Request):
-    nav_html = build_nav("balances")
+    # بارگذاری داده‌ها از دیتابیس (یا فایل JSON/Excel بسته به پیاده‌سازی شما)
     current_data = load_balances_from_db()
 
-    rows_html = ""
+    processed_data = []
     if current_data:
         for item in current_data:
+            # استخراج ایمن داده‌ها
             code = item.get("CustomerCode", "")
+            # تبدیل به عدد صحیح اگر اعشار صفر دارد (مثلاً 1001.0 -> 1001)
+            display_code = int(float(code)) if code and str(
+                code) != 'nan' else ""
+
             name = item.get("OriginalName", item.get("CustomerName", ""))
             balance = item.get("Balance", 0)
 
-            # فرمت کردن مبلغ
-            balance_str = f"{balance:,.0f}"
-            color = "red" if balance < 0 else "green"
+            # آماده‌سازی داده برای نمایش راحت‌تر در تمپلیت
+            processed_data.append({
+                "raw_code": code,           # برای استفاده در توابع JS
+                "display_code": display_code,  # برای نمایش در جدول
+                "name": name,
+                "balance": balance,
+                "balance_fmt": f"{balance:,.0f}",  # فرمت سه رقم سه رقم
+                "color": "red" if balance < 0 else "green"
+            })
 
-            rows_html += f"""
-            <tr>
-                <td>{int(float(code)) if code and str(code) != 'nan' else ''}</td>
-                <td>{name}</td>
-                <td style="direction: ltr; text-align: right; color: {color}; font-weight: bold;">{balance_str}</td>
-                <td>
-                    <button type="button" class="pill-button" onclick="editBalance('{name}', '{code}', {balance})">ویرایش</button>
-                    <button type="button" class="pill-button" style="color:red;" onclick="deleteBalance('{code}', '{name}')">حذف</button>
-                </td>
-            </tr>
-            """
-    else:
-        rows_html = "<tr><td colspan='4' style='text-align:center'>هنوز مانده‌ای ثبت نشده است.</td></tr>"
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>مدیریت مانده حساب مشتریان</title>
-            {BASE_CSS}
-            <script>
-            function deleteBalance(code, name) {{
-                if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
-                    const formData = new FormData();
-                    // اضافه کردن کد مشتری (بسیار مهم)
-                    formData.append('customer_code', code);
-                    // اضافه کردن نام مشتری (برای اطمینان)
-                    formData.append('customer_name', name);
-                    
-                    fetch('/delete-balance', {{
-                        method: 'POST',
-                        body: formData
-                    }}).then(() => location.reload());
-                }}
-            }}
-                
-                function editBalance(name, code, balance) {{
-                    const newCode = prompt("کد مشتری:", code);
-                    if (newCode === null) return; // کنسل شد
-                    
-                    const newName = prompt("نام مشتری:", name);
-                    if (newName === null) return;
-                    
-                    const newBalance = prompt("مانده جدید (عدد وارد کنید):", balance);
-                    if (newBalance === null) return;
-                    
-                    // ارسال به سرور برای ویرایش
-                    const formData = new FormData();
-                    formData.append('old_name', name);
-                    formData.append('code', newCode);
-                    formData.append('name', newName);
-                    formData.append('balance', newBalance);
-                    
-                    fetch('/edit-balance', {{
-                        method: 'POST',
-                        body: formData
-                    }}).then(() => location.reload());
-                }}
-
-                function addNewRow() {{
-                    const code = prompt("کد مشتری جدید:");
-                    if (!code) return;
-                    const name = prompt("نام مشتری جدید:");
-                    if (!name) return;
-                    const balance = prompt("مانده حساب:");
-                    if (balance === null || balance === "") return;
-
-                    const formData = new FormData();
-                    formData.append('code', code);
-                    formData.append('name', name);
-                    formData.append('balance', balance);
-                    
-                    fetch('/add-balance', {{
-                        method: 'POST',
-                        body: formData
-                    }}).then(() => location.reload());
-                }}
-            </script>
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>مدیریت مانده حساب مشتریان</h1>
-                
-                <div class="upload-card" style="margin-bottom: 24px;">
-                    <div class="upload-card-title">بارگذاری فایل اکسل مانده‌ها</div>
-                    <form action="/upload-balances" method="post" enctype="multipart/form-data">
-                        <div class="form-row">
-                            <label>فایل اکسل گزارش حسابداری (شامل هدرهای دو ردیفی)</label><br />
-                            <input type="file" name="balances_file" accept=".xlsx,.xls" required />
-                        </div>
-                        <button type="submit">بارگذاری و بروزرسانی مانده‌ها</button>
-                    </form>
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن ردیف دستی</button>
-                    <button type="button" class="pill-button" style="background-color: #fee2e2; color: #b91c1c;" onclick="clearAllBalances()">🗑️ حذف تمام مانده‌ها</button>
-                </div>
-
-                <h2>مانده‌های فعلی در حافظه سیستم</h2>
-                <div class="table-wrapper">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>کد مشتری</th>
-                                <th>نام مشتری</th>
-                                <th>مانده حساب</th>
-                                <th>عملیات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_html}
-                        </tbody>
-                    </table>
-                </div>
-                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
-            </div>
-            <script>
-                function clearAllBalances() {{
-                    if(confirm("هشدار: آیا از حذف تمامی مانده‌های ذخیره شده اطمینان دارید؟ این عملیات غیرقابل بازگشت است.")) {{
-                        fetch('/clear-balances', {{ method: 'POST' }})
-                        .then(() => location.reload());
-                    }}
-                }}
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse(
+        "customer_balances.html",
+        {
+            "request": request,
+            "balances": processed_data,
+            "title": "مدیریت مانده حساب مشتریان",
+            "active_tab": "balances"
+        }
+    )
 
 
 @app.post("/upload-balances", response_class=HTMLResponse)
 async def upload_balances(request: Request):
     form = await request.form()
     file = form.get("balances_file")
+
+    # بررسی انتخاب فایل
     if not file or not file.filename:
-        return HTMLResponse(content="<h1>خطا: فایلی انتخاب نشده است.</h1><a href='/customer-balances'>بازگشت</a>")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_message": "فایلی انتخاب نشده است.",
+            "back_link": "/customer-balances"
+        })
 
     # استفاده از سرویس برای خواندن فایل
     new_items = load_balances_from_excel(file.file)
 
     if not new_items:
-        return HTMLResponse(content="<h1>خطا: نتوانستیم داده‌ای از فایل استخراج کنیم. ساختار فایل را بررسی کنید.</h1><a href='/customer-balances'>بازگشت</a>")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_message": "نتوانستیم داده‌ای از فایل استخراج کنیم. ساختار فایل را بررسی کنید.",
+            "back_link": "/customer-balances"
+        })
 
     # به‌روزرسانی دیتابیس
     update_balances(new_items)
@@ -2460,104 +1615,76 @@ async def upload_all(
     checks_file: UploadFile | None = File(None),
     history_file: UploadFile | None = File(None)
 ):
-    nav_html = build_nav("main")
-
-    # ---------------------------------------------------------
-    # 👇 تغییر مهم: خواندن از SESSION_SETTINGS به جای form 👇
-    # ---------------------------------------------------------
-
-    # 1. اول تلاش می‌کنیم از فرم بخوانیم (برای اینکه اگر کاربر دکمه را زده باشد)
+    # 1. دریافت تنظیمات روزهای فعال‌سازی
     form = await request.form()
     reactivation_days_str = form.get("reactivation_days")
-
     if reactivation_days_str:
         try:
             reactivation_days = int(reactivation_days_str)
         except ValueError:
             reactivation_days = 90
     else:
-        # 2. اگر در فرم نبود (که با روش AJAX نیست)، از تنظیمات ذخیره شده می‌خوانیم
         reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
 
-    # ---------------------------------------------------------
-    # 👆 پایان تغییر 👆
-    # ---------------------------------------------------------
-    # بارگذاری فایل‌های اصلی
+    # 2. بارگذاری فایل‌های اصلی
     df_sales = load_sales_excel(sales_file.file)
     df_pay = load_payments_excel(payments_file.file)
 
-    # بارگذاری فایل چک‌ها
     if checks_file is not None and checks_file.filename:
         df_chk = load_checks_excel(checks_file.file)
     else:
         df_chk = pd.DataFrame()
 
-    # 👇 تغییر ۲: بارگذاری فایل سوابق (تاریخچه)
-    # فرض می‌کنیم فایل سوابق هم یک اکسل ساده است که ستون‌های مشتری و کالا را دارد
+    # 3. بارگذاری فایل سوابق (History)
+    history_found = False
     if history_file is not None and history_file.filename:
         try:
-            # خواندن اکسل سوابق
             df_history = pd.read_excel(history_file.file)
-
-            # نرمال‌سازی نام ستون‌ها (جهت اطمینان از حذف ی/ک عربی)
-            # این کار باعث می‌شود اگر در فایل سوابق "مشتري" با ی عربی بود، درست شود
+            # نرمال‌سازی نام ستون‌ها (حذف ی و ک عربی)
             df_history.columns = df_history.columns.str.replace(
                 'ي', 'ی', regex=True)
             df_history.columns = df_history.columns.str.replace(
                 'ك', 'ک', regex=True)
 
-            # نرمال‌سازی داده‌های متنی داخل جدول سوابق (برای مقایسه دقیق‌تر)
+            # نرمال‌سازی محتوا
             obj_cols = df_history.select_dtypes(include=['object']).columns
             for col in obj_cols:
                 df_history[col] = df_history[col].astype(
                     str).str.replace('ي', 'ی').str.replace('ك', 'ک')
 
+            if not df_history.empty:
+                history_found = True
         except Exception as e:
             print(f"Error loading history file: {e}")
-            df_history = pd.DataFrame()  # در صورت خطا، خالی در نظر می‌گیریم
+            df_history = pd.DataFrame()
     else:
         df_history = pd.DataFrame()
 
-    # تشخیص ستون گروه کالا
+    # 4. تشخیص ستون گروه کالا
     if "ProductCode" in df_sales.columns:
         group_col = "ProductCode"
     elif "ProductGroup" in df_sales.columns:
         group_col = "ProductGroup"
     else:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا در فایل فروش‌ها</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا در فایل فروش‌ها</h1>
-                    <p>در فایل فروش‌ها ستونی به نام <b>ProductCode</b> یا <b>ProductGroup</b> پیدا نشد.</p>
-                    <p>لطفاً یکی از این ستون‌ها را به اکسل اضافه کن و دوباره امتحان کن.</p>
-                    <a class="footer-link" href="/">بازگشت به صفحه آپلود</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_message": "در فایل فروش‌ها ستونی به نام ProductCode یا ProductGroup پیدا نشد. لطفاً یکی از این ستون‌ها را اضافه کنید.",
+            "back_link": "/"
+        })
 
     groups = sorted(df_sales[group_col].dropna().unique())
 
-    # ذخیره در متغیر سراسری برای استفاده در مراحل بعد
+    # 5. ذخیره در متغیر سراسری (State)
     LAST_UPLOAD["sales"] = df_sales
     LAST_UPLOAD["payments"] = df_pay
     LAST_UPLOAD["checks"] = df_chk
-    LAST_UPLOAD["history"] = df_history  # 👈 ذخیره فایل سوابق
+    LAST_UPLOAD["history"] = df_history
     LAST_UPLOAD["group_col"] = group_col
 
-    # 📥 خواندن تنظیمات پیش‌فرض گروه‌ها
+    # 6. خواندن پیکربندی‌ها برای نگاشت کالاها
     default_group_cfg = load_default_group_config()
-
-    # 📥 خواندن مپ کد کالا → گروه
     prod_group_df = load_product_group_map()
+
     code_to_category: dict[str, str] = {}
     if not prod_group_df.empty:
         for _, row in prod_group_df.iterrows():
@@ -2566,13 +1693,10 @@ async def upload_all(
             if code and grp:
                 code_to_category[code] = grp
 
-    # حدس ستون نام گروه/کالا برای نمایش
+    # 7. حدس ستون نام کالا برای نمایش زیباتر
     name_col_candidates = [
-        "ProductName",
-        "ProductGroupName",
-        "ProductGroupTitle",
-        "نام کالا",
-        "نام گروه کالا",
+        "ProductName", "ProductGroupName", "ProductGroupTitle",
+        "نام کالا", "نام گروه کالا"
     ]
     group_name_col = None
     for c in name_col_candidates:
@@ -2580,7 +1704,7 @@ async def upload_all(
             group_name_col = c
             break
 
-    # آماده‌سازی داده برای جاوااسکریپت (منوی کشویی گروه کالا)
+    # 8. آماده‌سازی داده پیکربندی برای ارسال به JS (جهت پر کردن خودکار فیلدها)
     js_cfg_map = {
         gname: {
             "percent": (cfg.get("percent") or 0) * 100,
@@ -2591,14 +1715,16 @@ async def upload_all(
     }
     js_cfg_json = json.dumps(js_cfg_map, ensure_ascii=False)
 
-    # ساخت ردیف‌های جدول مرحله ۲
-    rows_html = ""
+    # 9. ساخت لیست ردیف‌های جدول برای ارسال به Template
+    group_rows = []
+
     for g in groups:
         key_str = str(g)
         pretty_str = canonicalize_code(g)
         if pretty_str is None:
             pretty_str = ""
 
+        # یافتن نام نمایشی (مثلاً: 1001 - یخچال فریز)
         display_name = ""
         if group_name_col is not None:
             sample_rows = df_sales[df_sales[group_col] == g]
@@ -2610,6 +1736,7 @@ async def upload_all(
         else:
             display_text = pretty_str or key_str
 
+        # منطق پیدا کردن تنظیمات پیش‌فرض (از مپ کالا یا نام گروه)
         category_for_code = None
         if group_col == "ProductCode":
             canon_code = canonicalize_code(g)
@@ -2619,218 +1746,112 @@ async def upload_all(
         pre_cfg = None
         selected_category = ""
 
+        # اولویت ۱: تنظیمات اختصاصی کد کالا
         if category_for_code and category_for_code in default_group_cfg:
             selected_category = category_for_code
             pre_cfg = default_group_cfg[category_for_code]
+        # اولویت ۲: تنظیمات هم‌نام با کد گروه
         elif key_str in default_group_cfg:
             selected_category = key_str
             pre_cfg = default_group_cfg[key_str]
 
+        # مقادیر اولیه برای اینپوت‌ها
+        pre_percent = ""
+        pre_due_days = ""
+        pre_is_cash = False
+
         if pre_cfg:
-            percent_value_attr = f'value="{(pre_cfg.get("percent") or 0) * 100:.2f}"'
-            due_days_val = pre_cfg.get("due_days")
-            due_days_value_attr = (
-                f'value="{due_days_val}"' if due_days_val is not None else ""
-            )
-            checked_attr = "checked" if pre_cfg.get("is_cash") else ""
-        else:
-            percent_value_attr = ""
-            due_days_value_attr = ""
-            checked_attr = ""
-            selected_category = selected_category or ""
+            val = (pre_cfg.get("percent") or 0) * 100
+            pre_percent = f"{val:.2f}"
 
-        options_html = '<option value="">-- انتخاب کن --</option>'
-        for cat_name, cfg in default_group_cfg.items():
-            cat_percent = (cfg.get("percent") or 0) * 100
-            cat_due = cfg.get("due_days")
-            cat_is_cash = cfg.get("is_cash")
-            label_parts = [cat_name]
-            label_parts.append(f"{cat_percent:.2f}٪")
-            if cat_due is not None:
-                label_parts.append(f"{cat_due} روز")
-            if cat_is_cash:
-                label_parts.append("نقدی")
-            option_label = " | ".join(label_parts)
+            dd = pre_cfg.get("due_days")
+            if dd is not None:
+                pre_due_days = dd
 
-            sel_attr = "selected" if cat_name == selected_category else ""
-            options_html += f'<option value="{cat_name}" {sel_attr}>{option_label}</option>'
+            pre_is_cash = pre_cfg.get("is_cash", False)
 
-        rows_html += f"""
-            <tr>
-                <td>{display_text}</td>
-                <td>
-                    <input type="hidden" name="group_name" value="{key_str}" />
-                    <select name="group_category" onchange="onCategoryChange(this)">
-                        {options_html}
-                    </select>
-                </td>
-                <td>
-                    <input type="number" step="0.01" name="group_percent"
-                           placeholder="مثلاً 2 برای 2٪" {percent_value_attr} />
-                </td>
-                <td>
-                    <input type="number" step="1" name="group_due_days"
-                           placeholder="مثلاً 7، 30، 90" {due_days_value_attr} />
-                </td>
-                <td class="checkbox-center">
-                    <input type="checkbox" name="cash_group" value="{key_str}" {checked_attr} />
-                </td>
-            </tr>
-        """
+        # اضافه کردن داده‌های این ردیف به لیست
+        group_rows.append({
+            "key_str": key_str,
+            "display_text": display_text,
+            "selected_category": selected_category,
+            "pre_percent": pre_percent,
+            "pre_due_days": pre_due_days,
+            "pre_is_cash": pre_is_cash
+        })
 
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>تنظیم گروه‌ها و پورسانت</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>تعریف تنظیمات پورسانت و مهلت تسویه برای گروه‌های کالایی</h1>
-                <p>مرحله ۲ از ۲ – برای هر گروه (بر اساس ستون <b>{group_col}</b>) موارد زیر را پر کن:</p>
-                
-                {'<div class="message message-success">فایل سوابق با موفقیت دریافت شد و در محاسبات لحاظ خواهد شد.</div>' if not df_history.empty else ''}
-                
-                <ul style="font-size:12px; color:#4b5563;">
-                    <li>ستون <b>گروه کالا</b> از روی صفحهٔ «تعریف گروه‌های کالا (پیش‌فرض)» خوانده می‌شود.</li>
-                    <li>با انتخاب هر گروه کالا، درصد پورسانت / مهلت تسویه / نقدی بودن به‌صورت خودکار پر می‌شود (امکان ویرایش دستی هم هست).</li>
-                </ul>
-                
-                <form action="/calculate-commission" method="post">
-                    <!-- 👇👇👇 این ورودی مخفی عدد 120 را به مرحله بعد می‌برد 👇👇👇 -->
-                    <input type="hidden" name="reactivation_days" value="{reactivation_days}" />
-                    <!-- 👆👆👆 حتماً دقیقا بعد از تگ form باشد 👆👆👆 -->
-
-                    <div class="table-wrapper">
-                        <table>
-                            <tr>
-                                <th>کد/گروه کالا + نام</th>
-                                <th>گروه کالا (from پیش‌فرض)</th>
-                                <th>درصد پورسانت (%)</th>
-                                <th>مهلت تسویه (روز)</th>
-                                <th>اولویت نقدی</th>
-                            </tr>
-                            {rows_html}
-                        </table>
-                    </div>
-                    <div style="margin: 10px 0;">
-                        <label>
-                            <input type="checkbox" name="apply_balances" value="1" />
-                            اعمال مانده‌های حساب مشتریان به محاسبات (کسر از پورسانت/اضافه به طلب)
-                        </label>
-                    </div>
-                    <!-- در داخل تگ <form> در فایل index.html -->
-                    <div class="form-row">
-                        <label>
-                            <input type="checkbox" name="use_chart" value="1" />
-                            استفاده از نمودار مشتریان (نیاز به اینترنت)
-                        </label>
-                        Chart.js
-                    </div>
-                    <button type="submit">محاسبه پورسانت </button>
-                </form>
-                <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
-            </div>
-            <script>
-                const CATEGORY_CONFIG = {js_cfg_json};
-                function onCategoryChange(sel) {{
-                    const code = sel.value;
-                    if (!code) return;
-                    const cfg = CATEGORY_CONFIG[code];
-                    if (!cfg) return;
-                    const row = sel.closest('tr');
-                    if (!row) return;
-                    const percentInput = row.querySelector('input[name="group_percent"]');
-                    const dueInput = row.querySelector('input[name="group_due_days"]');
-                    const cashCheckbox = row.querySelector('input[name="cash_group"]');
-                    if (percentInput) {{
-                        percentInput.value = cfg.percent != null ? cfg.percent : "";
-                    }}
-                    if (dueInput) {{
-                        if (cfg.due_days != null && cfg.due_days !== undefined) {{
-                            dueInput.value = cfg.due_days;
-                        }} else {{
-                            dueInput.value = "";
-                        }}
-                    }}
-                    if (cashCheckbox) {{
-                        cashCheckbox.checked = !!cfg.is_cash;
-                    }}
-                }}
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
-
+    # 10. رندر کردن تمپلیت
+    return templates.TemplateResponse(
+        "configure_groups.html",
+        {
+            "request": request,
+            "active_tab": "main",
+            "group_rows": group_rows,
+            "default_group_cfg": default_group_cfg,
+            "group_col": group_col,
+            "history_found": history_found,
+            "reactivation_days": reactivation_days,
+            "js_cfg_json": js_cfg_json
+        }
+    )
 
 # ------------------ /calculate-commission ------------------ #
-DEBUG_TOGGLE_SCRIPT = """
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    var buttons = document.querySelectorAll('[data-toggle="debug"]');
-    buttons.forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            var targetId = btn.getAttribute('data-target');
-            var panel = document.getElementById(targetId);
-            if (!panel) return;
-            panel.classList.toggle('debug-hidden');
-        });
-    });
-});
-</script>
-"""
+
+
+def format_number(value):
+    if value is None:
+        return "0"
+    try:
+        return "{:,.0f}".format(float(value))
+    except (ValueError, TypeError):
+        return str(value)
+
+
+templates.env.filters["format_number"] = format_number
 
 
 @app.post("/calculate-commission", response_class=HTMLResponse)
 async def calculate_commission(request: Request):
-    nav_html = build_nav("main")
+    """
+    محاسبه پورسانت بر اساس تنظیمات گروه‌های وارد شده.
+    """
 
+    # =========== بررسی آپلود فایل‌ها ===========
     if LAST_UPLOAD["sales"] is None or LAST_UPLOAD["payments"] is None:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا</h1>
-                    <p>ابتدا باید فایل‌های اکسل را در مرحله قبل آپلود کنی.</p>
-                    <a class="footer-link" href="/">بازگشت به آپلود فایل‌ها</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse(
+            "error_no_upload.html",
+            {
+                "request": request,
+                "active_tab": "main",
+                "title": "خطا"
+            }
+        )
 
+    # =========== دریافت داده‌های فرم ===========
     form = await request.form()
+
     group_names = form.getlist("group_name")
     categories = form.getlist("group_category")
     percents = form.getlist("group_percent")
     due_days_list = form.getlist("group_due_days")
     cash_groups = set(form.getlist("cash_group"))
     use_chart = form.get("use_chart") == "1"
-    # بررسی گزینه اعمال مانده‌ها
     apply_balances = form.get("apply_balances") == "1"
 
-    # خواندن مانده‌ها از دیتابیس
+    # =========== خواندن مانده‌ها ===========
     balances_dict = {}
     if apply_balances:
         balances_dict = load_balances_from_db()
         print(
             f"DEBUG: Apply Balances is ON. Loaded {len(balances_dict)} customer balances.")
 
+    # =========== پردازش تنظیمات گروه‌ها ===========
     group_config: dict = {}
     for name, cat, p, dd in zip(group_names, categories, percents, due_days_list):
         key = str(name).strip()
         if not key:
             continue
-        # درصد
+
         percent_val = 0.0
         p_str = str(p).strip()
         if p_str:
@@ -2839,7 +1860,7 @@ async def calculate_commission(request: Request):
                 percent_val = float(p_str) / 100.0
             except ValueError:
                 percent_val = 0.0
-        # مهلت تسویه
+
         due_days_val = None
         dd_str = str(dd).strip()
         if dd_str:
@@ -2847,7 +1868,9 @@ async def calculate_commission(request: Request):
                 due_days_val = int(float(dd_str))
             except ValueError:
                 due_days_val = None
-        is_cash = key in cash_groups
+
+        is_cash = (key in cash_groups)
+
         group_config[key] = {
             "percent": percent_val,
             "due_days": due_days_val,
@@ -2855,36 +1878,26 @@ async def calculate_commission(request: Request):
             "category": str(cat).strip() if cat else None,
         }
 
+    # =========== بررسی خالی نبودن تنظیمات ===========
     if not group_config:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>خطا</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>خطا</h1>
-                    <p>هیچ تنظیم معتبری برای گروه‌ها وارد نشده است.</p>
-                    <a class="footer-link" href="javascript:history.back()">بازگشت</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse(
+            "error_no_config.html",
+            {
+                "request": request,
+                "active_tab": "main",
+                "title": "خطا"
+            }
+        )
 
+    # =========== دریافت دیتافریم‌های اصلی ===========
     df_sales = LAST_UPLOAD["sales"]
     df_pay = LAST_UPLOAD["payments"]
     df_chk = LAST_UPLOAD["checks"]
     group_col = LAST_UPLOAD["group_col"]
     LAST_UPLOAD["group_config"] = group_config
 
-    form = await request.form()
-    # 1. تلاش برای خواندن از فرم (اگر کاربر از صفحه تنظیمات آمده باشد)
+    # =========== خواندن reactivation_days ===========
     reactivation_days_str = form.get("reactivation_days")
-    # 2. اگر در فرم نبود، از تنظیمات ذخیره شده (Session) بخوان
     if reactivation_days_str is None:
         reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
     else:
@@ -2892,7 +1905,8 @@ async def calculate_commission(request: Request):
             reactivation_days = int(reactivation_days_str)
         except ValueError:
             reactivation_days = SESSION_SETTINGS.get("reactivation_days", 90)
-    # 3. استفاده در تابع compute_commissions
+
+    # =========== محاسبات اصلی ===========
     sales_result, salesperson_result, payments_result = compute_commissions(
         df_sales,
         df_pay,
@@ -2902,17 +1916,18 @@ async def calculate_commission(request: Request):
         reactivation_days=reactivation_days
     )
 
-    # 🔹 نتایج را برای استفاده در نمودار مشتری‌ها نگه می‌داریم
     LAST_UPLOAD["sales_result"] = sales_result
     LAST_UPLOAD["payments_result"] = payments_result
 
-    # -------- خلاصه اعداد --------
+    # =========== داده‌های خلاصه ===========
     sales_rows = len(sales_result)
     sales_sum = sales_result["Amount"].sum(
     ) if "Amount" in sales_result.columns else 0
+
     pay_rows = len(payments_result)
     pay_sum = payments_result["Amount"].sum(
     ) if "Amount" in payments_result.columns else 0
+
     chk_rows = len(df_chk) if df_chk is not None and not df_chk.empty else 0
     chk_sum = df_chk["Amount"].sum(
     ) if chk_rows > 0 and "Amount" in df_chk.columns else 0
@@ -2922,41 +1937,31 @@ async def calculate_commission(request: Request):
         total_commission = float(
             salesperson_result["TotalCommission"].sum() or 0)
 
-    # ... (کدهای قبلی تا قبل از آماده‌سازی جدول فاکتورها بدون تغییر است) ...
-
-    # -------- آماده‌سازی جدول فاکتورها برای نمایش --------
+    # =========== ساخت جدول فاکتورها ===========
     invoices_view = sales_result.copy()
 
-    # تاریخ‌ها به شمسی
     for dt_col in ["InvoiceDate", "DueDate"]:
         if dt_col in invoices_view.columns:
             invoices_view[dt_col] = invoices_view[dt_col].map(to_jalali_str)
 
-    # درصد به صورت انسانی (عدد درصد)
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = (
             invoices_view["CommissionPercent"] * 100).round(2)
 
-    # نرمال‌سازی کدها فقط برای نمایش
     for col in ["InvoiceID", "CustomerCode", group_col]:
         if col in invoices_view.columns:
             invoices_view[col] = invoices_view[col].map(
-                lambda v: canonicalize_code(v) if pd.notna(v) else "")
+                lambda v: canonicalize_code(v) if pd.notna(v) else ""
+            )
 
-    # 👇 ۱. شرطی کردن لینک نام مشتری
-    # اگر use_chart فعال نباشد، نام مشتری فقط متن ساده است، نه لینک
     if "CustomerName" in invoices_view.columns and "CustomerCode" in invoices_view.columns:
         def make_customer_link(row):
             name = row.get("CustomerName", "")
             code = row.get("CustomerCode", "")
             if pd.isna(name) or str(name).strip() == "":
                 return ""
-
-            # اگر کاربر تیک نمودار را نزده باشد، فقط متن برگردان
             if not use_chart:
                 return str(name)
-
-            # در غیر این صورت لینک بساز
             return (
                 f'<a href="#" class="customer-link" '
                 f'data-customer-code="{code}" '
@@ -2965,7 +1970,6 @@ async def calculate_commission(request: Request):
         invoices_view["CustomerName"] = invoices_view.apply(
             make_customer_link, axis=1)
 
-    # بج رنگی Priority
     if "Priority" in invoices_view.columns:
         def pri_badge(v):
             if v == "cash":
@@ -2975,12 +1979,11 @@ async def calculate_commission(request: Request):
             return ""
         invoices_view["Priority"] = invoices_view["Priority"].map(pri_badge)
 
-    # تبدیل درصد به رشته با علامت ٪
     if "CommissionPercent" in invoices_view.columns:
         invoices_view["CommissionPercent"] = invoices_view["CommissionPercent"].map(
-            lambda x: f"{x:.2f}٪")
+            lambda x: f"{x:.2f}٪"
+        )
 
-    # گرد کردن مبالغ
     for col in ["Amount", "PaidAmount", "Remaining", "CommissionAmount"]:
         if col in invoices_view.columns:
             invoices_view[col] = invoices_view[col].round(0).astype("int64")
@@ -2997,217 +2000,42 @@ async def calculate_commission(request: Request):
     invoices_table_html = ""
     if cols:
         invoices_table_html = invoices_view[cols].to_html(
-            index=False, border=0, escape=False)
+            index=False, border=0, escape=False, classes="data-table"
+        )
 
-    # جدول پورسانت به تفکیک فروشنده
+    # =========== ساخت جدول فروشندگان ===========
     if "TotalCommission" in salesperson_result.columns:
         salesperson_result["TotalCommission"] = salesperson_result["TotalCommission"].round(
             0).astype("int64")
-    salesperson_table_html = salesperson_result.to_html(index=False, border=0)
 
-    # دیباگ
+    salesperson_table_html = salesperson_result.to_html(
+        index=False, border=0, classes="data-table")
+
+    # =========== بخش‌های Debug ===========
     debug_names_html = build_debug_names_html(sales_result, payments_result)
     debug_checks_html = build_debug_checks_html(df_chk, payments_result)
 
-    # 👇 ۲. تعریف متغیرهای خالی برای بخش‌های نمودار
-    chart_js_cdn = ""
-    chart_modal_html = ""
-    chart_script_content = ""
-
-    # 👇 ۳. پر کردن متغیرها فقط اگر use_chart فعال باشد
-    if use_chart:
-        chart_js_cdn = '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>'
-
-        chart_modal_html = f"""
-        <!-- مودال نمودار مشتری -->
-        <div id="customer-modal" class="modal-backdrop modal-hidden">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <div>
-                        <div class="modal-title" id="modal-customer-title"></div>
-                        <div class="modal-subtitle" id="modal-customer-subtitle"></div>
-                    </div>
-                    <button type="button" class="modal-close-btn" id="modal-close-btn">بستن</button>
-                </div>
-                <div class="modal-body">
-                    <div style="height:260px;">
-                        <canvas id="customer-chart"></canvas>
-                    </div>
-                    <div class="modal-totals">
-                        جمع خرید: <strong id="total-amount"></strong>
-                        &nbsp;|&nbsp;
-                        جمع تسویه: <strong id="total-paid"></strong>
-                        &nbsp;|&nbsp;
-                        مانده: <strong id="total-remaining"></strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """
-
-        chart_script_content = """
-        <script>
-        (function() {{
-            let chartInstance = null;
-            function closeModal() {{
-                const modal = document.getElementById('customer-modal');
-                if (modal) modal.classList.add('modal-hidden');
-            }}
-            function openModal() {{
-                const modal = document.getElementById('customer-modal');
-                if (modal) modal.classList.remove('modal-hidden');
-            }}
-            // کلیک روی اسم مشتری
-            document.addEventListener('click', function (ev) {{
-                const link = ev.target.closest('.customer-link');
-                if (!link) return;
-                ev.preventDefault();
-                const code = link.getAttribute('data-customer-code') || '';
-                const name = link.getAttribute('data-customer-name') || '';
-                if (!code) {{
-                    alert('کد مشتری مشخص نیست.');
-                    return;
-                }}
-                fetch('/customer-stats?customer_code=' + encodeURIComponent(code))
-                    .then(r => r.json())
-                    .then(data => {{
-                        if (data.error) {{
-                            alert(data.error);
-                            return;
-                        }}
-                        document.getElementById('modal-customer-title').textContent =
-                            data.customerName || name || 'مشتری بدون نام';
-                        document.getElementById('modal-customer-subtitle').textContent =
-                            'کد مشتری: ' + (data.customerCode || code);
-                        document.getElementById('total-amount').textContent =
-                            (data.totals.amount || 0).toLocaleString('fa-IR');
-                        document.getElementById('total-paid').textContent =
-                            (data.totals.paid || 0).toLocaleString('fa-IR');
-                        document.getElementById('total-remaining').textContent =
-                            (data.totals.remaining || 0).toLocaleString('fa-IR');
-                        const points = data.points || [];
-                        const labels = points.map(p => p.date || '');
-                        const amount = points.map(p => p.amount || 0);
-                        const paid = points.map(p => p.paid || 0);
-                        const remaining = points.map(p => p.remaining || 0);
-                        const canvas = document.getElementById('customer-chart');
-                        if (!canvas) return;
-                        const ctx = canvas.getContext('2d');
-                        if (chartInstance) {{
-                            chartInstance.destroy();
-                        }}
-                        chartInstance = new Chart(ctx, {{
-                            type: 'line',
-                            data: {{
-                                labels: labels,
-                                datasets: [
-                                    {{ label: 'خرید', data: amount, tension: 0.2 }},
-                                    {{ label: 'تسویه', data: paid, tension: 0.2 }},
-                                    {{ label: 'مانده', data: remaining, tension: 0.2 }}
-                                ]
-                            }},
-                            options: {{
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                interaction: {{ mode: 'index', intersect: false }},
-                                scales: {{
-                                    y: {{
-                                        ticks: {{
-                                            callback: function(v) {{
-                                                try {{ return v.toLocaleString('fa-IR'); }} catch(e) {{ return v; }}
-                                            }}
-                                        }}
-                                    }}
-                                }}
-                            }}
-                        }});
-                        openModal();
-                    }})
-                    .catch(err => {{
-                        console.error(err);
-                        alert('خطا در دریافت اطلاعات مشتری.');
-                    }});
-            }});
-            // بستن مودال با کلیک روی دکمه یا پس‌زمینه
-            document.addEventListener('click', function (ev) {{
-                const modal = document.getElementById('customer-modal');
-                if (!modal || modal.classList.contains('modal-hidden')) return;
-                const closeBtn = document.getElementById('modal-close-btn');
-                if (ev.target === closeBtn || (closeBtn && closeBtn.contains(ev.target))) {{
-                    closeModal();
-                    return;
-                }}
-                if (ev.target === modal) {{
-                    closeModal();
-                    return;
-                }}
-            }});
-            // بستن با ESC
-            document.addEventListener('keydown', function (ev) {{
-                if (ev.key === 'Escape') {{
-                    closeModal();
-                }}
-            }});
-        }})();
-        </script>
-        """
-
-    # 👇 ۴. ساخت HTML نهایی با استفاده از متغیرهای شرطی
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>نتیجه محاسبه پورسانت</title>
-            {BASE_CSS}
-            {chart_js_cdn}  <!-- لینک Chart.js فقط اگر تیک خورده باشد اینجا قرار می‌گیرد -->
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>نتیجه محاسبه پورسانت</h1>
-                <div class="summary-grid">
-                    <div class="summary-card summary-sales">
-                        <div class="label">فروش‌ها</div>
-                        <div class="value">تعداد ردیف‌ها: {sales_rows:,}</div>
-                        <div class="value">جمع مبلغ فروش‌ها: {sales_sum:,.0f}</div>
-                    </div>
-                    <div class="summary-card summary-payments">
-                        <div class="label">پرداخت‌ها</div>
-                        <div class="value">تعداد ردیف‌ها: {pay_rows:,}</div>
-                        <div class="value">جمع مبلغ پرداخت‌ها: {pay_sum:,.0f}</div>
-                    </div>
-                    <div class="summary-card summary-checks">
-                        <div class="label">چک‌ها</div>
-                        <div class="value">تعداد ردیف‌ها: {chk_rows:,}</div>
-                        <div class="value">جمع مبلغ چک‌ها: {chk_sum:,.0f}</div>
-                    </div>
-                    <div class="summary-card summary-commission">
-                        <div class="label">پورسانت کل</div>
-                        <div class="value">{total_commission:,.0f}</div>
-                    </div>
-                </div>
-                <hr/>
-                <h2>جزئیات فاکتورها و پورسانت هر فاکتور</h2>
-                <div class="table-wrapper">
-                    {invoices_table_html}
-                </div>
-                {debug_names_html}
-                {debug_checks_html}
-                <hr/>
-                <h2>پورسانت نهایی به تفکیک فروشنده</h2>
-                <div class="table-wrapper">
-                    {salesperson_table_html}
-                </div>
-                <a class="footer-link" href="/">شروع دوباره (آپلود فایل‌های جدید)</a>
-            </div>
-            
-            {chart_modal_html}  <!-- مودال فقط اگر تیک خورده باشد -->
-            {DEBUG_TOGGLE_SCRIPT}
-            {chart_script_content}  <!-- اسکریپت‌ها فقط اگر تیک خورده باشند -->
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    # =========== رندر Template ===========
+    return templates.TemplateResponse(
+        "commission_results.html",
+        {
+            "request": request,
+            "active_tab": "main",
+            "title": "نتیجه محاسبه پورسانت",
+            "use_chart": use_chart,
+            "sales_rows": sales_rows,
+            "sales_sum": sales_sum,
+            "pay_rows": pay_rows,
+            "pay_sum": pay_sum,
+            "chk_rows": chk_rows,
+            "chk_sum": chk_sum,
+            "total_commission": total_commission,
+            "invoices_table_html": invoices_table_html,
+            "salesperson_table_html": salesperson_table_html,
+            "debug_names_html": debug_names_html,
+            "debug_checks_html": debug_checks_html,
+        }
+    )
 
 
 @app.get("/customer-stats")
@@ -3288,102 +2116,40 @@ async def customer_stats(customer_code: str):
 # ------------------ UI: تب ۲ – مدیریت پیش‌فرض گروه‌های کالا ------------------ #
 
 
-@app.get("/group-config", response_class=HTMLResponse)
-async def group_config_page():
-    nav_html = build_nav("config")
-
-    # خواندن داده‌های فعلی
+@app.get("/group-config")
+async def group_config_page(request: Request):
+    """صفحه تعریف گروه‌های کالا (پیش‌فرض)"""
     current_cfg = load_default_group_config()
 
-    rows = list(current_cfg.items())
-    rows_html = ""
-
-    # فقط ردیف‌های موجود (دیگه ۵ سطر خالی اضافه نمی‌کنیم)
-    for idx, (gname, cfg) in enumerate(rows):
+    # آماده‌سازی داده‌های فرم
+    group_rows = []
+    for idx, (gname, cfg) in enumerate(current_cfg.items()):
         percent_human = (cfg.get("percent") or 0) * 100
         due_days = cfg.get("due_days")
         is_cash = cfg.get("is_cash", False)
-        due_str = "" if due_days is None else str(due_days)
-        checked_attr = "checked" if is_cash else ""
 
-        rows_html += f"""
-        <tr>
-            <td><input type="text" name="cfg_group" value="{gname}" /></td>
-            <td><input type="number" step="0.01" name="cfg_percent" value="{percent_human:.2f}" /></td>
-            <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
-            <td class="checkbox-center">
-                <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
-            </td>
-        </tr>
-        """
+        group_rows.append({
+            "idx": idx,
+            "name": gname,
+            "percent": f"{percent_human:.2f}" if percent_human > 0 else "",
+            "due_days": str(due_days) if due_days else "",
+            "is_cash": is_cash
+        })
 
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>تعریف گروه‌های کالا (پیش‌فرض)</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
-                <p>
-                    این صفحه مخصوص این است که یک‌بار گروه‌های کالا را با درصد پورسانت، مهلت تسویه و نقدی بودن تعریف کنی.
-                    بعداً در صفحهٔ محاسبه پورسانت، این گروه‌ها در منوی کشویی «گروه کالا» استفاده می‌شوند.
-                </p>
-
-                <form action="/group-config" method="post">
-                    <div class="table-wrapper">
-                        <table>
-                            <tr>
-                                <th>نام گروه کالا</th>
-                                <th>درصد پورسانت (%)</th>
-                                <th>مهلت تسویه (روز)</th>
-                                <th>نقدی؟</th>
-                            </tr>
-                            <tbody id="group-config-body">
-                                {rows_html}
-                            </tbody>
-                        </table>
-                    </div>
-                    <br/>
-                    <button type="button" onclick="addGroupRow()">➕ افزودن سطر جدید</button>
-                    &nbsp;
-                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
-                </form>
-
-                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
-            </div>
-
-            <script>
-                function addGroupRow() {{
-                    const tbody = document.getElementById('group-config-body');
-                    if (!tbody) return;
-                    const idx = tbody.querySelectorAll('tr').length;
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
-                        <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
-                        <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
-                        <td class="checkbox-center">
-                            <input type="checkbox" name="cfg_is_cash" value="${{idx}}" />
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                }}
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse(
+        "group_config.html",
+        {
+            "request": request,
+            "active_tab": "config",
+            "title": "تعریف گروه‌های کالا (پیش‌فرض)",
+            "group_rows": group_rows
+        }
+    )
 
 
-@app.post("/group-config", response_class=HTMLResponse)
+@app.post("/group-config")
 async def group_config_save(request: Request):
-    nav_html = build_nav("config")
-
+    """ذخیره تنظیمات گروه‌های کالا"""
     form = await request.form()
     groups = form.getlist("cfg_group")
     percents = form.getlist("cfg_percent")
@@ -3417,126 +2183,61 @@ async def group_config_save(request: Request):
 
         is_cash = str(idx) in cash_indices
 
-        rows_data.append(
-            {
-                "Group": g_key,
-                "Percent": percent_val,
-                "DueDays": due_val,
-                "IsCash": is_cash,
-            }
-        )
+        rows_data.append({
+            "Group": g_key,
+            "Percent": percent_val,
+            "DueDays": due_val,
+            "IsCash": is_cash,
+        })
 
+    # ذخیره داده‌ها
+    success = False
     if rows_data:
-        df_out = pd.DataFrame(rows_data)
-        df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
+        try:
+            df_out = pd.DataFrame(rows_data)
+            df_out.to_excel(DEFAULT_GROUP_CONFIG_PATH, index=False)
+            success = True
+        except Exception as e:
+            success = False
 
-        message_html = """
-        <div class="message message-success">
-            تنظیمات گروه‌های کالا با موفقیت در <code>group_config.xlsx</code> ذخیره شد ✅
-        </div>
-        """
-    else:
-        message_html = """
-        <div class="message message-error">
-            هیچ ردیف معتبری برای ذخیره وارد نشده است.
-        </div>
-        """
-
-    # دوباره فرم را با داده‌های جدید نمایش بده
+    # آماده‌سازی داده‌ها برای نمایش مجدد
     current_cfg = load_default_group_config()
-    rows = list(current_cfg.items())
-    rows_html = ""
-    for idx, (gname, cfg) in enumerate(rows):
+    group_rows = []
+    for idx, (gname, cfg) in enumerate(current_cfg.items()):
         percent_human = (cfg.get("percent") or 0) * 100
         due_days = cfg.get("due_days")
         is_cash = cfg.get("is_cash", False)
-        due_str = "" if due_days is None else str(due_days)
-        checked_attr = "checked" if is_cash else ""
 
-        rows_html += f"""
-        <tr>
-            <td><input type="text" name="cfg_group" value="{gname}" /></td>
-            <td><input type="number" step="0.01" name="cfg_percent" value="{percent_human:.2f}" /></td>
-            <td><input type="number" step="1" name="cfg_due_days" value="{due_str}" /></td>
-            <td class="checkbox-center">
-                <input type="checkbox" name="cfg_is_cash" value="{idx}" {checked_attr} />
-            </td>
-        </tr>
-        """
+        group_rows.append({
+            "idx": idx,
+            "name": gname,
+            "percent": f"{percent_human:.2f}" if percent_human > 0 else "",
+            "due_days": str(due_days) if due_days else "",
+            "is_cash": is_cash
+        })
 
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>تعریف گروه‌های کالا (پیش‌فرض)</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>تعریف گروه‌های کالا (پیش‌فرض)</h1>
-                {message_html}
-
-                <form action="/group-config" method="post">
-                    <div class="table-wrapper">
-                        <table>
-                            <tr>
-                                <th>نام گروه کالا</th>
-                                <th>درصد پورسانت (%)</th>
-                                <th>مهلت تسویه (روز)</th>
-                                <th>نقدی؟</th>
-                            </tr>
-                            <tbody id="group-config-body">
-                                {rows_html}
-                            </tbody>
-                        </table>
-                    </div>
-                    <br/>
-                    <button type="button" onclick="addGroupRow()">➕ افزودن سطر جدید</button>
-                    &nbsp;
-                    <button type="submit">ذخیره پیش‌فرض‌ها در group_config.xlsx</button>
-                </form>
-
-                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
-            </div>
-
-            <script>
-                function addGroupRow() {{
-                    const tbody = document.getElementById('group-config-body');
-                    if (!tbody) return;
-                    const idx = tbody.querySelectorAll('tr').length;
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td><input type="text" name="cfg_group" value="" placeholder="نام گروه کالا" /></td>
-                        <td><input type="number" step="0.01" name="cfg_percent" value="" placeholder="مثلاً 2 برای 2٪" /></td>
-                        <td><input type="number" step="1" name="cfg_due_days" value="" placeholder="مثلاً 7، 30، 90" /></td>
-                        <td class="checkbox-center">
-                            <input type="checkbox" name="cfg_is_cash" value="${{idx}}" />
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                }}
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse(
+        "group_config.html",
+        {
+            "request": request,
+            "active_tab": "config",
+            "title": "تعریف گروه‌های کالا (پیش‌فرض)",
+            "group_rows": group_rows,
+            "success_message": "تنظیمات گروه‌های کالا با موفقیت ذخیره شد ✅" if success else None,
+            "error_message": "هیچ ردیف معتبری برای ذخیره وارد نشده است." if not success and not rows_data else None
+        }
+    )
 
 
 # ------------------ UI: تب ۳ – تخصیص کالا به گروه ------------------ #
 
-# ------------------ UI: تب ۳ – تخصیص کالا به گروه ------------------ #
-
-@app.get("/group-items", response_class=HTMLResponse)
-async def group_items_page():
-    nav_html = build_nav("items")
-
-    # تنظیمات گروه‌های پیش‌فرض (برای ساخت منوی کشویی)
+@app.get("/group-items")
+async def group_items_page(request: Request):
+    # 1. بارگذاری تنظیمات و مپ فعلی
     default_group_cfg = load_default_group_config()
-
-    # مپ فعلی کالا → گروه از روی فایل product_group_map.xlsx
     pg_map = load_product_group_map()
+
+    # 2. ساخت دیکشنری کد → گروه از مپ فعلی
     code_to_group: dict[str, str] = {}
     if not pg_map.empty:
         for _, r in pg_map.iterrows():
@@ -3545,8 +2246,8 @@ async def group_items_page():
             if code and grp:
                 code_to_group[code] = grp
 
-    # گزینه‌های منوی کشویی گروه کالا (برای JS و ردیف‌های دستی)
-    base_options_html = '<option value="">-- بدون گروه --</option>'
+    # 3. آماده‌سازی گزینه‌های منوی کشویی گروه
+    group_options = []
     for gname, cfg in default_group_cfg.items():
         percent = (cfg.get("percent") or 0) * 100
         due_days = cfg.get("due_days")
@@ -3556,28 +2257,23 @@ async def group_items_page():
             label_parts.append(f"{due_days} روز")
         if is_cash:
             label_parts.append("نقدی")
-        label = " | ".join(label_parts)
-        base_options_html += f'<option value="{gname}">{label}</option>'
+        group_options.append({
+            "value": gname,
+            "label": " | ".join(label_parts)
+        })
 
-    # برای جاوااسکریپت (بدون خط جدید که داخل بک‌تیک راحت بنشیند)
-    product_group_options_js = base_options_html.replace("\n", "")
-
+    # 4. بررسی وجود فایل فروش
     df_sales = LAST_UPLOAD["sales"]
+    product_rows = []
+    info_message = None
+    info_type = None
 
-    # آماده‌سازی ردیف‌ها
-    rows_html = ""
-    info_html = ""
-
-    # اگر هنوز فایل فروش آپلود نشده
     if df_sales is None:
-        info_html = """
-        <p class="message message-error">
-            هنوز هیچ فایل فروشی در تب «محاسبه پورسانت» آپلود نشده است.
-            با این حال می‌توانی با دکمه «افزودن سطر جدید» در پایین جدول، کالاها را دستی اضافه کنی.
-        </p>
-        """
+        # حالت: فایل فروش آپلود نشده
+        info_message = "هنوز هیچ فایل فروشی در تب «محاسبه پورسانت» آپلود نشده است. با این حال می‌توانی با دکمه «افزودن سطر جدید» در پایین جدول، کالاها را دستی اضافه کنی."
+        info_type = "error"
     else:
-        # سعی می‌کنیم ستون کد و نام کالا را در فروش پیدا کنیم
+        # 5. جستجوی ستون کد و نام کالا
         code_candidates = ["ProductCode", "کد کالا", "کد محصول", "ProductID"]
         name_candidates = ["ProductName", "نام کالا",
                            "شرح کالا", "شرح", "ProductGroupName"]
@@ -3596,21 +2292,16 @@ async def group_items_page():
                 break
 
         if code_col is None:
-            info_html = """
-            <p class="message message-error">
-                در فایل فروش، ستونی برای کد کالا پیدا نشد. لطفاً یکی از ستون‌ها را با نام‌هایی مثل
-                <code>ProductCode</code>، <code>کد کالا</code> یا <code>کد محصول</code> ایجاد کن.
-                همچنین می‌توانی کالاها را با دکمه «افزودن سطر جدید» به‌صورت دستی وارد کنی.
-            </p>
-            """
+            # حالت: ستون کد کالا پیدا نشد
+            info_message = 'در فایل فروش، ستونی برای کد کالا پیدا نشد. لطفاً یکی از ستون‌ها را با نام‌هایی مثل <code>ProductCode</code>، <code>کد کالا</code> یا <code>کد محصول</code> ایجاد کن. همچنین می‌توانی کالاها را با دکمه «افزودن سطر جدید» به‌صورت دستی وارد کنی.'
+            info_type = "error"
         else:
-            info_html = f"""
-            <p class="message">
-                منبع لیست کالاها، آخرین فایل فروش آپلود‌شده است (ستون کد: <b>{code_col}</b>{'، نام: <b>' + name_col + '</b>' if name_col else ''}).<br/>
-                اگر می‌خواهی موردی اضافه کنی که در فروش‌ها نیامده، می‌توانی از دکمهٔ «افزودن سطر جدید» استفاده کنی.
-            </p>
-            """
+            # 6. ساخت پیام اطلاعاتی
+            name_display = f"، نام: <b>{name_col}</b>" if name_col else ""
+            info_message = f'منبع لیست کالاها، آخرین فایل فروش آپلود‌شده است (ستون کد: <b>{code_col}</b>{name_display}).<br/>اگر می‌خواهی موردی اضافه کنی که در فروش‌ها نیامده، می‌توانی از دکمهٔ «افزودن سطر جدید» استفاده کنی.'
+            info_type = "info"
 
+            # 7. استخراج لیست کالاها از فایل فروش
             df_items = df_sales.copy()
             df_items["__CodeKey__"] = df_items[code_col].map(
                 lambda v: canonicalize_code(v) if pd.notna(v) else None
@@ -3628,179 +2319,78 @@ async def group_items_page():
                 .sort_values(["__CodeKey__"])
             )
 
-            # برای هر کالای موجود در فروش، یک ردیف با منوی کشویی گروه
+            # 8. ساخت لیست ردیف‌ها برای نمایش
             for _, row in df_items.iterrows():
                 code_key = str(row["__CodeKey__"])
                 name_val = str(row["__Name__"] or "")
-
                 current_group = code_to_group.get(code_key, "")
+                product_rows.append({
+                    "code": code_key,
+                    "name": name_val,
+                    "current_group": current_group
+                })
 
-                # options منوی کشویی برای این کالا (با selected)
-                options_html = '<option value="">-- بدون گروه --</option>'
-                for gname, cfg in default_group_cfg.items():
-                    percent = (cfg.get("percent") or 0) * 100
-                    due_days = cfg.get("due_days")
-                    is_cash = cfg.get("is_cash", False)
-                    label_parts = [gname, f"{percent:.2f}٪"]
-                    if due_days is not None:
-                        label_parts.append(f"{due_days} روز")
-                    if is_cash:
-                        label_parts.append("نقدی")
-                    label = " | ".join(label_parts)
-                    sel_attr = "selected" if gname == current_group else ""
-                    options_html += f'<option value="{gname}" {sel_attr}>{label}</option>'
-
-                rows_html += f"""
-                <tr>
-                    <td>
-                        <input type="text" name="prod_code" value="{code_key}" />
-                    </td>
-                    <td>
-                        <input type="text" name="prod_name" value="{name_val}" />
-                    </td>
-                    <td>
-                        <select name="prod_group">
-                            {options_html}
-                        </select>
-                    </td>
-                </tr>
-                """
-
-    # مپ فعلی کالا → گروه برای نمایش پایین صفحه
+    # 9. آماده‌سازی HTML مپ فعلی
+    current_map_html = None
     if not pg_map.empty:
-        map_html = """
-        <div class="table-wrapper">
-        """ + pg_map.to_html(index=False, border=0) + "</div>"
-    else:
-        map_html = "<p>فعلاً مپی برای کالاها ثبت نشده است.</p>"
+        current_map_html = pg_map.to_html(index=False, border=0, classes="")
 
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>تخصیص کالا به گروه</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>تخصیص کالا به گروه</h1>
-                <p>
-                    در این تب، کد و نام کالاها را (از روی آخرین فایل فروش یا به‌صورت دستی) می‌بینی و برای هر کالا
-                    یک «گروه کالا» از لیست پیش‌فرض‌ها انتخاب می‌کنی.
-                    این مپ در <code>product_group_map.xlsx</code> ذخیره می‌شود و در محاسبهٔ پورسانت برای
-                    پر کردن خودکار گروه کالا استفاده می‌شود.
-                </p>
-
-                {info_html}
-
-                <form action="/group-items-save" method="post">
-                    <div class="table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>کد کالا</th>
-                                    <th>نام کالا</th>
-                                    <th>گروه کالا</th>
-                                </tr>
-                            </thead>
-                            <tbody id="product-group-body">
-                                {rows_html}
-                            </tbody>
-                        </table>
-                    </div>
-                    <br/>
-                    <button type="button" onclick="addProductRow()">➕ افزودن سطر جدید</button>
-                    &nbsp;
-                    <button type="submit">ذخیره تخصیص‌ها در product_group_map.xlsx</button>
-                </form>
-
-                <hr/>
-
-                <h2>مپ فعلی کالا → گروه</h2>
-                {map_html}
-
-                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
-            </div>
-
-            <script>
-                const PRODUCT_GROUP_OPTIONS = `{product_group_options_js}`;
-
-                function addProductRow() {{
-                    const tbody = document.getElementById('product-group-body');
-                    if (!tbody) return;
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>
-                            <input type="text" name="prod_code" value="" placeholder="کد کالا" />
-                        </td>
-                        <td>
-                            <input type="text" name="prod_name" value="" placeholder="نام کالا (اختیاری)" />
-                        </td>
-                        <td>
-                            <select name="prod_group">
-                                ${'{'}PRODUCT_GROUP_OPTIONS{'}'}
-                            </select>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                }}
-            </script>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    # 10. رندر تمپلیت
+    return templates.TemplateResponse(
+        "group_items.html",
+        {
+            "request": request,
+            "active_tab": "items",
+            "title": "تخصیص کالا به گروه",
+            "group_options": group_options,
+            "product_rows": product_rows,
+            "info_message": info_message,
+            "info_type": info_type,
+            "current_map_html": current_map_html
+        }
+    )
 
 # ------------------ UI: تب جدید - رفع اشکال کدهای مشتری ------------------
 
 
 @app.get("/fix-unresolved", response_class=HTMLResponse)
 async def fix_unresolved_page(request: Request):
-    nav_html = build_nav("fix")
-    # --- دیباگ و بررسی فایل ---
     import os
-    current_dir = os.getcwd()
-    file_path = "customer_codes_bind.xlsx"
-    file_exists = os.path.exists(file_path)
 
-    if not file_exists:
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>رفع اشکال کدهای مشتری</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>رفع اشکال کدهای مشتری</h1>
-                    <div class="message message-error">
-                        فایل اکسل <b>customer_codes_bind.xlsx</b> یافت نشد.
-                        <br>
-                        مسیر جاری: {current_dir}
-                        <br><br>
-                        لطفاً ابتدا به سربرگ <a href="/bind-codes" style="font-weight:bold; text-decoration:underline;">عطف کد به مشتری</a> بروید و فایل را تولید کنید.
-                    </div>
-                </div>
-            </body>
-        </html>
+    file_path = "customer_codes_bind.xlsx"
+
+    # بررسی وجود فایل
+    if not os.path.exists(file_path):
+        current_dir = os.getcwd()
+        error_message = f"""
+            فایل اکسل <b>customer_codes_bind.xlsx</b> یافت نشد.
+            <br>
+            مسیر جاری: {current_dir}
+            <br><br>
+            لطفاً ابتدا به سربرگ <a href="/bind-codes" style="font-weight:bold; text-decoration:underline;">عطف کد به مشتری</a> بروید و فایل را تولید کنید.
         """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse("fix_unresolved.html", {
+            "request": request,
+            "active_nav": "fix",
+            "error_message": error_message
+        })
 
     try:
         df_bind = pd.read_excel(file_path)
+
         # بررسی ستون‌ها
         required_cols = ["CustomerName", "CustomerCode", "Status"]
         missing_cols = [
             col for col in required_cols if col not in df_bind.columns]
         if missing_cols:
-            return HTMLResponse(content=f"<h1>خطا در ساختار فایل اکسل</h1><p>ستون‌های زیر یافت نشدند: {', '.join(missing_cols)}</p>")
+            return templates.TemplateResponse("error.html", {
+                "request": request,
+                "active_nav": "fix",
+                "error_title": "خطا در ساختار فایل اکسل",
+                "error_message": f"ستون‌های زیر یافت نشدند: {', '.join(missing_cols)}"
+            })
 
-        # ---------------------------------------------------------
-        # خواندن لیست سیاه برای نمایش وضعیت دکمه‌ها
-        # ---------------------------------------------------------
+        # خواندن لیست سیاه
         blacklist_set = set()
         blacklist_path = "blacklist.xlsx"
         if os.path.exists(blacklist_path):
@@ -3808,7 +2398,8 @@ async def fix_unresolved_page(request: Request):
                 df_black = pd.read_excel(blacklist_path)
                 if "CustomerName" in df_black.columns:
                     blacklist_set = set(
-                        df_black["CustomerName"].apply(normalize_persian_name))
+                        df_black["CustomerName"].apply(normalize_persian_name)
+                    )
             except Exception as e:
                 print(f"Error loading blacklist for UI: {e}")
 
@@ -3816,363 +2407,77 @@ async def fix_unresolved_page(request: Request):
         unresolved_df = df_bind[df_bind["CustomerCode"] == "یافت نشد"].copy()
         resolved_df = df_bind[df_bind["CustomerCode"] != "یافت نشد"].copy()
 
-        # ساخت HTML جدول برای موارد یافت نشده
-        unresolved_rows_html = ""
-        if not unresolved_df.empty:
-            for _, row in unresolved_df.iterrows():
-                name = row.get("CustomerName", "")
-                unresolved_rows_html += f"""
-                <tr class="unresolved-row">
-                    <td>
-                        <input type="text" name="fix_name" value="{name}" readonly style="border:none; background:transparent; width:100%;" />
-                    </td>
-                    <td>
-                        <input type="text" name="fix_code" placeholder="کد مشتری را وارد کنید" style="width: 100%;" />
-                    </td>
-                    <td>
-                        <button type="button" class="pill-button" style="padding:5px 10px;" onclick="removeAndBlacklistRow(this)">❌</button>
-                    </td>
-                </tr>
-                """
-        else:
-            unresolved_rows_html = "<tr><td colspan='3' style='text-align:center; color:green;'>همه کدها با موفقیت یافت شدند! ✅</td></tr>"
+        # آماده‌سازی لیست موارد یافت نشده
+        unresolved_items = []
+        for _, row in unresolved_df.iterrows():
+            unresolved_items.append({
+                "name": row.get("CustomerName", "")
+            })
 
-        # ساخت HTML جدول برای موارد یافت شده (با تغییرات دکمه لیست سیاه)
-        resolved_rows_html = ""
-        if not resolved_df.empty:
-            for _, row in resolved_df.iterrows():
-                name = row.get("CustomerName", "")
-                code = row.get("CustomerCode", "")
+        # آماده‌سازی لیست موارد یافت شده
+        resolved_items = []
+        for _, row in resolved_df.iterrows():
+            name = row.get("CustomerName", "")
+            code = row.get("CustomerCode", "")
+            norm_name = normalize_persian_name(name)
+            is_blacklisted = norm_name in blacklist_set
 
-                # بررسی وضعیت لیست سیاه
-                norm_name = normalize_persian_name(name)
-                is_blacklisted = norm_name in blacklist_set
+            resolved_items.append({
+                "name": name,
+                "code": code,
+                "is_blacklisted": is_blacklisted
+            })
 
-                # تعیین دکمه مناسب بر اساس وضعیت لیست سیاه
-                if is_blacklisted:
-                    # اگر در لیست سیاه است: دکمه خروج از لیست سیاه
-                    blacklist_btn = f"""
-                    <button type="button" class="pill-button" style="background:#f59e0b; color:white; padding:5px 10px;" onclick="removeFromBlacklist('{name}')">خروج از لیست سیاه 🚫</button>
-                    """
-                    edit_delete_btn = ""  # دکمه‌های ویرایش/حذف را مخفی می‌کنیم یا می‌توانیم نگه داریم
-                else:
-                    # اگر در لیست سیاه نیست: دکمه افزودن به لیست سیاه
-                    blacklist_btn = f"""
-                    <button type="button" class="pill-button" style="background:Pink; color:Black; padding:5px 10px;" onclick="addToBlacklist('{name}')">افزودن به لیست سیاه 🚫</button>
-                    """
-                    edit_delete_btn = f"""
-                    <button type="button" class="pill-button" onclick="editResolvedRow(this)">ویرایش</button>
-                    <button type="button" class="pill-button" style="color:red;" onclick="deleteResolvedRow(this)">حذف</button>
-                    """
-
-                resolved_rows_html += f"""
-                <tr class="resolved-row">
-                    <td>{name}</td>
-                    <td style="color: green; font-weight: bold;">{code}</td>
-                    <td>
-                        {edit_delete_btn}
-                        {blacklist_btn}
-                    </td>
-                </tr>
-                """
-
-        debug_html = f"""
-        <div style="background:#f0fdf4; color:#166534; padding:10px; border:1px solid #bbf7d0; margin-bottom:20px; border-radius:5px; font-size:12px;">
-            <strong>وضعیت سیستم:</strong><br>
-            - تعداد کل ردیف‌ها: {len(df_bind)}<br>
-            - تعداد کدهای یافت نشده: {len(unresolved_df)}<br>
-            - تعداد کدهای یافت شده: {len(resolved_df)}
-        </div>
-        """
-
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>رفع اشکال کدهای مشتری</title>
-                {BASE_CSS}
-                <script>
-                function removeRow(btn) {{
-                    const row = btn.closest('tr');
-                    row.remove();
-                }}
-
-                function removeAndBlacklistRow(btn) {{
-                    const row = btn.closest('tr');
-                    const nameInput = row.querySelector('input[name="fix_name"]');
-                    const name = nameInput ? nameInput.value : "";
-                    if(confirm("آیا از صرف نظر از این کد اطمینان دارید؟")) {{
-                        fetch('/blacklist-item', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ "customer_name": name }})
-                        }})
-                        .then(response => response.json())
-                        .then(result => {{
-                            if (result.status === 'ok') {{
-                                row.remove();
-                                alert('نام مشتری به لیست سیاه اضافه و از لیست حذف شد.');
-                            }} else {{
-                                alert('خطا: ' + result.message);
-                            }}
-                        }})
-                        .catch(error => console.error('Error:', error));
-                    }}
-                }}
-
-                function addNewRow() {{
-                    const tbody = document.querySelector('#fix-form tbody');
-                    const newRow = document.createElement('tr');
-                    newRow.className = 'unresolved-row';
-                    newRow.innerHTML = `
-                        <td>
-                            <input type="text" name="fix_name" placeholder="نام مشتری جدید" style="width:100%;" />
-                        </td>
-                        <td>
-                            <input type="text" name="fix_code" placeholder="کد مشتری" style="width: 100%;" />
-                        </td>
-                        <td>
-                            <button type="button" class="pill-button" style="background:#ef4444; color:white; padding:5px 10px;" onclick="removeRow(this)">❌</button>
-                        </td>
-                    `;
-                    tbody.appendChild(newRow);
-                }}
-
-                // --- توابع بخش یافت شده ---
-                function editResolvedRow(btn) {{
-                    const row = btn.closest('tr');
-                    const nameCell = row.cells[0];
-                    const codeCell = row.cells[1];
-                    const currentName = nameCell.innerText;
-                    const currentCode = codeCell.innerText;
-                    const newName = prompt("ویرایش نام مشتری:", currentName);
-                    if (newName === null) return;
-                    const newCode = prompt("ویرایش کد مشتری:", currentCode);
-                    if (newCode === null) return;
-                    nameCell.innerText = newName;
-                    codeCell.innerText = newCode;
-                    saveResolvedEdit(currentName, newName, newCode);
-                }}
-
-                function deleteResolvedRow(btn) {{
-                    const row = btn.closest('tr');
-                    const nameCell = row.cells[0];
-                    const nameToDelete = nameCell.innerText;
-                    if(confirm("آیا از حذف این مورد اطمینان دارید؟")) {{
-                        fetch('/delete-resolved-item', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ "customer_name": nameToDelete }})
-                        }})
-                        .then(response => response.json())
-                        .then(result => {{
-                            if (result.status === 'ok') {{
-                                row.remove();
-                                alert('مورد با موفقیت حذف شد.');
-                            }} else {{
-                                alert('خطا در حذف: ' + result.message);
-                            }}
-                        }})
-                        .catch(error => console.error('Error:', error));
-                    }}
-                }}
-
-                function saveResolvedEdit(oldName, newName, newCode) {{
-                    fetch('/edit-resolved-item', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            "old_name": oldName,
-                            "new_name": newName,
-                            "new_code": newCode
-                        }})
-                    }})
-                    .then(response => response.json())
-                    .then(result => {{
-                        if (result.status !== 'ok') {{
-                            alert('خطا در ذخیره ویرایش: ' + result.message);
-                            location.reload();
-                        }}
-                    }})
-                    .catch(error => {{
-                        console.error('Error:', error);
-                        alert('خطا در ارتباط با سرور');
-                        location.reload();
-                    }});
-                }}
-
-                // --- توابع جدید لیست سیاه برای موارد یافت شده ---
-                function addToBlacklist(name) {{
-                    if(confirm(`آیا می‌خواهید «${{name}}» را به لیست سیاه اضافه کنید؟`)) {{
-                        fetch('/blacklist-item', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ "customer_name": name }})
-                        }})
-                        .then(response => response.json())
-                        .then(result => {{
-                            if (result.status === 'ok') {{
-                                alert('نام مشتری به لیست سیاه اضافه شد.');
-                                location.reload(); // رفرش برای نمایش وضعیت جدید
-                            }} else {{
-                                alert('خطا: ' + result.message);
-                            }}
-                        }})
-                        .catch(error => console.error('Error:', error));
-                    }}
-                }}
-
-                function removeFromBlacklist(name) {{
-                    if(confirm(`آیا می‌خواهید «${{name}}» را از لیست سیاه خارج کنید؟`)) {{
-                        fetch('/unblacklist-item', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ "customer_name": name }})
-                        }})
-                        .then(response => response.json())
-                        .then(result => {{
-                            if (result.status === 'ok') {{
-                                alert('نام مشتری از لیست سیاه حذف شد.');
-                                location.reload(); // رفرش برای نمایش وضعیت جدید
-                            }} else {{
-                                alert('خطا: ' + result.message);
-                            }}
-                        }})
-                        .catch(error => console.error('Error:', error));
-                    }}
-                }}
-                // ---------------------------------------
-
-                function submitFixes() {{
-                    const form = document.getElementById('fix-form');
-                    const formData = new FormData(form);
-                    const data = [];
-                    const names = formData.getAll('fix_name');
-                    const codes = formData.getAll('fix_code');
-                    for (let i = 0; i < names.length; i++) {{
-                        const name = names[i].trim();
-                        const code = codes[i].trim();
-                        if (name && code) {{
-                            data.push({{
-                                "CustomerName": name,
-                                "CustomerCode": code
-                            }});
-                        }}
-                    }}
-                    if (data.length === 0) {{
-                        alert("هیچ کدی برای ذخیره وارد نشده است.");
-                        return;
-                    }}
-                    fetch('/manual-map-save', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify(data)
-                    }})
-                    .then(response => response.json())
-                    .then(result => {{
-                        if (result.status === 'ok') {{
-                            alert('کدها با موفقیت ذخیره شدند و فایل اکسل بروزرسانی شد.');
-                            location.reload();
-                        }} else {{
-                            alert('خطا در ذخیره: ' + result.message);
-                        }}
-                    }})
-                    .catch(error => {{
-                        console.error('Error:', error);
-                        alert('خطا در ارتباط با سرور');
-                    }});
-                }}
-                </script>
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>رفع اشکال کدهای مشتری</h1>
-                    {debug_html}
-                    <div style="margin-bottom: 15px;">
-                        <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن سطر جدید</button>
-                    </div>
-                    <h2>🔴 لیست مشتریانی که کدشان یافت نشد</h2>
-                    <p>لطفاً کد مشتری صحیح را در کادر روبروی نام وارد کنید.</p>
-                    <form id="fix-form">
-                        <div class="table-wrapper">
-                            <table class="data-table table-unresolved">
-                                <thead>
-                                    <tr>
-                                        <th>نام مشتری</th>
-                                        <th>کد مشتری (اصلاح شده)</th>
-                                        <th>عملیات</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {unresolved_rows_html}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div style="margin-top: 20px;">
-                            <button type="button" class="pill-button" onclick="submitFixes()" style="background-color: #10b981; color: white;">💾 ذخیره تغییرات</button>
-                        </div>
-                    </form>
-                    <hr/>
-                    <h2>🟢 لیست مشتریانی که کدشان یافت شد</h2>
-                    <div class="table-wrapper">
-                        <table class="data-table table-resolved">
-                            <thead>
-                                <tr>
-                                    <th>نام مشتری</th>
-                                    <th>کد مشتری</th>
-                                    <th>عملیات</th>
-                                </thead>
-                            <tbody>
-                                {resolved_rows_html}
-                            </tbody>
-                        </table>
-                    </div>
-                    <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse("fix_unresolved.html", {
+            "request": request,
+            "active_nav": "fix",
+            "total_rows": len(df_bind),
+            "unresolved_count": len(unresolved_df),
+            "resolved_count": len(resolved_df),
+            "unresolved_items": unresolved_items,
+            "resolved_items": resolved_items
+        })
 
     except Exception as e:
         print(f"DEBUG ERROR: {e}")
-        return HTMLResponse(content=f"<h1>خطا در خواندن فایل اکسل</h1><p>{str(e)}</p>")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "active_nav": "fix",
+            "error_title": "خطا در خواندن فایل اکسل",
+            "error_message": str(e)
+        })
 
 
 @app.post("/manual-map-save")
 async def manual_map_save(request: Request):
     try:
-        # دریافت لیست داده‌ها از بدنه درخواست (JSON)
         body = await request.json()
-        # لیستی از دیکشنری‌ها: [{"CustomerName": "...", "CustomerCode": "...", "TotalAmount": ...}, ...]
         new_mappings = body
 
         file_path = "customer_codes_bind.xlsx"
 
-        # ۱. خواندن فایل اکسل موجود
+        # خواندن فایل اکسل موجود
         if os.path.exists(file_path):
             df_existing = pd.read_excel(file_path)
         else:
             df_existing = pd.DataFrame(
-                columns=["CustomerName", "CustomerCode", "TotalAmount", "Status"])
+                columns=["CustomerName", "CustomerCode",
+                         "TotalAmount", "Status"]
+            )
 
-        # ۲. تبدیل داده‌های جدید به دیتافریم
+        # تبدیل داده‌های جدید به دیتافریم
         df_new = pd.DataFrame(new_mappings)
-
-        # اضافه کردن ستون وضعیت برای موارد جدید
         df_new["Status"] = "کد یافت شد (دستی)"
 
-        # ۳. حذف ردیف‌های قدیمی که نام مشتری‌شان در لیست جدید وجود دارد (برای جایگزینی)
-        # نکته: ما بر اساس نام مشتری تطبیق می‌دهیم و ردیف قدیمی را حذف می‌کنیم
+        # حذف ردیف‌های قدیمی که نام مشتری‌شان در لیست جدید وجود دارد
         if not df_existing.empty and "CustomerName" in df_existing.columns:
             df_existing = df_existing[~df_existing["CustomerName"].isin(
                 df_new["CustomerName"])]
 
-        # ۴. ادغام دیتافریم قدیمی و جدید
+        # ادغام دیتافریم قدیمی و جدید
         df_final = pd.concat([df_existing, df_new], ignore_index=True)
 
-        # ۵. ذخیره در فایل اکسل
+        # ذخیره در فایل اکسل
         df_final.to_excel(file_path, index=False)
 
         return JSONResponse(content={"status": "ok", "message": "فایل با موفقیت بروزرسانی شد."})
@@ -4259,8 +2564,6 @@ async def delete_resolved_item(request: Request):
 
 @app.post("/group-items-save", response_class=HTMLResponse)
 async def group_items_save(request: Request):
-    nav_html = build_nav("items")
-
     form = await request.form()
     codes = form.getlist("prod_code")
     names = form.getlist("prod_name")
@@ -4276,13 +2579,11 @@ async def group_items_save(request: Request):
             # اگر گروه انتخاب نشده، این ردیف را نادیده بگیر
             continue
         name_val = str(name).strip() if name is not None else ""
-        new_rows.append(
-            {
-                "ProductCode": code_key,
-                "ProductName": name_val,
-                "Group": grp_name,
-            }
-        )
+        new_rows.append({
+            "ProductCode": code_key,
+            "ProductName": name_val,
+            "Group": grp_name,
+        })
 
     df_new = pd.DataFrame(
         new_rows, columns=["ProductCode", "ProductName", "Group"])
@@ -4302,113 +2603,52 @@ async def group_items_save(request: Request):
         else:
             df_all = df_old
 
-    if not df_all.empty:
+    # تعیین موفقیت یا عدم موفقیت
+    success = not df_all.empty
+
+    if success:
         save_product_group_map(df_all)
-        msg_html = """
-        <div class="message message-success">
-            تخصیص کالاها به گروه‌ها با موفقیت در <code>product_group_map.xlsx</code> ذخیره شد ✅
-        </div>
-        """
-    else:
-        msg_html = """
-        <div class="message message-error">
-            هیچ تخصیص معتبری برای ذخیره ثبت نشد.
-        </div>
-        """
 
     # برای نمایش، دوباره مپ را بخوانیم
     pg_map = load_product_group_map()
+    map_html = None
     if not pg_map.empty:
-        map_html = """
-        <div class="table-wrapper">
-        """ + pg_map.to_html(index=False, border=0) + "</div>"
-    else:
-        map_html = "<p>فعلاً مپی برای کالاها ثبت نشده است.</p>"
+        map_html = pg_map.to_html(index=False, border=0, classes="data-table")
 
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>تخصیص کالا به گروه</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-
-                <h1>تخصیص کالا به گروه</h1>
-                {msg_html}
-
-                <h2>مپ فعلی کالا → گروه</h2>
-                {map_html}
-
-                <a class="footer-link" href="/group-items">بازگشت به صفحهٔ تخصیص کالا</a>
-                <br/>
-                <a class="footer-link" href="/">بازگشت به محاسبه پورسانت</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse("group_items_save.html", {
+        "request": request,
+        "active_nav": "items",
+        "success": success,
+        "map_html": map_html
+    })
 
 # ------------------ UI: دانلود مستقیم اکسل کدها ------------------
 
 # ------------------ UI: سربرگ جدید - عطف کد به مشتری ------------------
 
+# ==========================================
+# 1. Bind Codes Functions (عطف کد به مشتری)
+# ==========================================
+
 
 @app.get("/bind-codes", response_class=HTMLResponse)
 async def bind_codes_page(request: Request):
-    """
-    صفحه جدید برای عطف کد به مشتری (با ساختار استاندارد سایت).
-    """
-    nav_html = build_nav("bind")
-
-    html = f"""
-    <html>
-        <head>
-            <meta charset="utf-8" />
-            <title>عطف کد به مشتری</title>
-            {BASE_CSS}
-        </head>
-        <body>
-            <div class="container">
-                {nav_html}
-                <h1>عطف کد به مشتری</h1>
-                <div class="upload-card">
-                    <div class="upload-card-title">بارگذاری فایل‌های پرداخت و چک</div>
-                    <p>
-                        در این بخش فایل‌های پرداخت و چک را آپلود کنید تا سیستم کدهای مشتری را استخراج کرده و 
-                        فایل اکسل مربوطه را برای شما تولید کند.
-                    </p>
-                    <form action="/process-bind-codes" method="post" enctype="multipart/form-data">
-                        <div class="form-row">
-                            <label>فایل پرداخت‌ها (Payments):</label><br />
-                            <input type="file" name="payments_file" accept=".xlsx,.xls" required />
-                        </div>
-                        <div class="form-row">
-                            <label>فایل چک‌ها (Checks) - اختیاری:</label><br />
-                            <input type="file" name="checks_file" accept=".xlsx,.xls" />
-                        </div>
-                        <button type="submit">پردازش و دانلود فایل اکسل</button>
-                    </form>
-                </div>
-                <a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
-            </div>
-        </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse(
+        "bind_codes.html",
+        {
+            "request": request,
+            "title": "عطف کد به مشتری",
+            "active_tab": "bind"
+        }
+    )
 
 
 @app.post("/process-bind-codes", response_class=HTMLResponse)
 async def process_bind_codes(
+    request: Request,
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None)
 ):
-    """
-    پردازش فایل‌ها برای عطف کد به مشتری و به‌روزرسانی فایل اکسل (بدون حذف کدهای قبلی).
-    """
-    nav_html = build_nav("bind")
     try:
         # 1. بارگذاری فایل‌ها
         df_pay = load_payments_excel(payments_file.file)
@@ -4416,22 +2656,19 @@ async def process_bind_codes(
         if checks_file and checks_file.filename:
             df_chk = load_checks_excel(checks_file.file)
 
-        # ---------------------------------------------------------
-        # تغییر جدید: خواندن لیست سیاه برای حذف کامل از خروجی
-        # ---------------------------------------------------------
+        # لیست سیاه
         blacklist_set = set()
         blacklist_path = "blacklist.xlsx"
         if os.path.exists(blacklist_path):
             try:
                 df_black = pd.read_excel(blacklist_path)
                 if "CustomerName" in df_black.columns:
-                    # نرمال‌سازی نام‌های لیست سیاه برای مقایسه دقیق
                     blacklist_set = set(
                         df_black["CustomerName"].apply(normalize_persian_name))
             except Exception as e:
                 print(f"Error loading blacklist: {e}")
 
-        # 2. ساخت مپ نام به کد (با اعمال لیست سیاه در مرحله تطبیق)
+        # 2. ساخت مپ
         name_code_map_from_balances = build_name_code_map_from_balances()
 
         # 3. آماده‌سازی پرداخت‌ها
@@ -4439,27 +2676,20 @@ async def process_bind_codes(
             df_pay, df_chk, pd.DataFrame()
         )
 
-        # ---------------------------------------------------------
-        # تغییر مهم: فیلتر کردن نام‌های لیست سیاه از نتایج
-        # ---------------------------------------------------------
-        # ابتدا مواردی که کد پیدا شده را فیلتر می‌کنیم
+        # فیلتر لیست سیاه
         resolved_df = payments_df[payments_df["ResolvedCustomer"].notna()].copy(
         )
         resolved_df = resolved_df[resolved_df["ResolvedCustomer"]
                                   != "یافت نشد"]
 
-        # حذف نام‌های سیاه از لیست کدهای یافت شده
         if not resolved_df.empty:
             resolved_df = resolved_df[
                 ~resolved_df["CustomerName"].apply(
                     lambda x: normalize_persian_name(x) in blacklist_set)
             ]
 
-        # سپس مواردی که کد پیدا نشد (unresolved) را فیلتر می‌کنیم
-        # این بخش باعث می‌شود نام‌های سیاه اصلاً به عنوان "یافت نشد" هم ثبت نشوند
         if unresolved_items:
             unresolved_df = pd.DataFrame(unresolved_items)
-            # حذف نام‌های سیاه از لیست یافت نشده‌ها
             unresolved_df = unresolved_df[
                 ~unresolved_df["Name"].apply(
                     lambda x: normalize_persian_name(x) in blacklist_set)
@@ -4467,10 +2697,9 @@ async def process_bind_codes(
         else:
             unresolved_df = pd.DataFrame()
 
-        # 4. ساخت دیتافریم نتیجه برای این دور پردازش
+        # 4. ساخت دیتافریم نتیجه
         current_result_data = []
 
-        # مواردی که کد پیدا شد (پس از فیلتر لیست سیاه)
         if not resolved_df.empty:
             grouped = resolved_df.groupby("ResolvedCustomer").agg({
                 "CustomerName": "first",
@@ -4484,7 +2713,6 @@ async def process_bind_codes(
                     "Status": "کد یافت شد"
                 })
 
-        # مواردی که کد پیدا نشد (پس از فیلتر لیست سیاه)
         if not unresolved_df.empty:
             grouped_unresolved = unresolved_df.groupby("Name").agg({
                 "Amount": "sum"
@@ -4499,15 +2727,12 @@ async def process_bind_codes(
 
         df_current = pd.DataFrame(current_result_data)
 
-        # ---------------------------------------------------------
-        # 5. منطق ادغام با فایل قبلی (Merge Logic)
-        # ---------------------------------------------------------
+        # 5. منطق ادغام
         output_filename = "customer_codes_bind.xlsx"
         df_existing = pd.DataFrame()
         if os.path.exists(output_filename):
             df_existing = pd.read_excel(output_filename)
 
-        # لیست‌ها برای گزارش
         newly_added = []
         updated_codes = []
 
@@ -4516,22 +2741,17 @@ async def process_bind_codes(
                 name = row["CustomerName"]
                 new_code = row["CustomerCode"]
 
-                # جستجو در فایل موجود
                 if not df_existing.empty:
                     existing_row = df_existing[df_existing["CustomerName"] == name]
                 else:
                     existing_row = pd.DataFrame()
 
                 if existing_row.empty:
-                    # مورد جدید: اضافه کن
                     newly_added.append(name)
-                    # استفاده از concat برای اضافه کردن
                     df_existing = pd.concat(
                         [df_existing, pd.DataFrame([row])], ignore_index=True)
                 else:
-                    # مورد قبلی وجود دارد
                     old_code = existing_row.iloc[0]["CustomerCode"]
-                    # اگر کد قبلی "یافت نشد" بود و الان کد پیدا شده -> آپدیت کن
                     if old_code == "یافت نشد" and new_code != "یافت نشد":
                         updated_codes.append(
                             f"{name} (کد قبلی: یافت نشد -> کد جدید: {new_code})")
@@ -4539,7 +2759,6 @@ async def process_bind_codes(
                                         == name, "CustomerCode"] = new_code
                         df_existing.loc[df_existing["CustomerName"]
                                         == name, "Status"] = "کد یافت شد (بروزرسانی)"
-                    # اگر کد قبلی معتبر بود و الان کد جدیدی پیدا شده (متفاوت) -> آپدیت کن
                     elif old_code != "یافت نشد" and new_code != "یافت نشد" and old_code != new_code:
                         updated_codes.append(
                             f"{name} (کد قبلی: {old_code} -> کد جدید: {new_code})")
@@ -4548,49 +2767,18 @@ async def process_bind_codes(
                         df_existing.loc[df_existing["CustomerName"]
                                         == name, "Status"] = "کد تغییر یافت"
 
-        # ذخیره فایل نهایی
         df_existing.to_excel(output_filename, index=False)
 
-        # ---------------------------------------------------------
-        # 6. ساخت HTML گزارش
-        # ---------------------------------------------------------
-        report_html = ""
-        if newly_added:
-            report_html += f"<p style='color:green;'>✅ <b>{len(newly_added)} مشتری جدید اضافه شدند.</b></p>"
-        if updated_codes:
-            report_html += f"<p style='color:blue;'>🔄 <b>{len(updated_codes)} مشتری بروزرسانی شدند:</b></p><ul>"
-            for item in updated_codes:
-                report_html += f"<li>{item}</li>"
-            report_html += "</ul>"
-        if not newly_added and not updated_codes:
-            report_html = "<p style='color:gray;'>تغییری در لیست کدها ایجاد نشد (همه موارد تکراری یا بدون کد بودند).</p>"
-
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>عطف کد به مشتری - نتیجه</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>عملیات عطف کد به مشتری انجام شد ✅</h1>
-                    <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; border: 1px solid #10b981; margin-bottom: 20px;">
-                        <h3>گزارش تغییرات</h3>
-                        {report_html}
-                        <div style="margin-top:15px;">
-                            <a href="/download-bind-file" class="pill-button" style="background-color: #059669; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block;">
-                                📥 دانلود فایل به‌روزرسانی شده
-                            </a>
-                        </div>
-                    </div>
-                    <a href="/bind-codes">بازگشت و پردازش فایل جدید</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse(
+            "bind_codes_result.html",
+            {
+                "request": request,
+                "title": "نتیجه عطف کد",
+                "active_tab": "bind",
+                "newly_added": newly_added,
+                "updated_codes": updated_codes
+            }
+        )
 
     except Exception as e:
         print(f"Error in bind codes: {e}")
@@ -4599,53 +2787,42 @@ async def process_bind_codes(
 
 @app.get("/download-bind-file")
 async def download_bind_file():
-    """
-    دانلود فایل تولید شده در مرحله عطف کد به مشتری.
-    """
     output_filename = "customer_codes_bind.xlsx"
     if not os.path.exists(output_filename):
         return HTMLResponse(content="<h1>فایل یافت نشد. لطفاً ابتدا فایل را بسازید.</h1>")
     return FileResponse(
         output_filename,
-        media_type="application/vnd.openpxmlformats-officedocument.spreadsheetml.sheet",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=output_filename
     )
 
-# نام فایل خروجی
-OUTPUT_CODES_FILENAME = "customer_codes_generated.xlsx"
 
+# ==========================================
+# 2. Direct Download Functions (دانلود مستقیم)
+# ==========================================
 
-@app.post("/process-direct-download")
+@app.post("/process-direct-download", response_class=HTMLResponse)
 async def process_direct_download(
+    request: Request,
     payments_file: UploadFile = File(...),
     checks_file: UploadFile | None = File(None)
 ):
-    """
-    پردازش فایل و ذخیره در سرور (کنار فایل‌های اکسل دیگر).
-    """
-    nav_html = build_nav("main")
     try:
-        # 1. بارگذاری فایل‌ها
+        # 1. بارگذاری
         df_pay = load_payments_excel(payments_file.file)
         df_chk = pd.DataFrame()
         if checks_file and checks_file.filename:
             df_chk = load_checks_excel(checks_file.file)
 
-        # 2. ساخت مپ نام به کد از دیتابیس مانده‌ها
-        name_code_map_from_balances = build_name_code_map_from_balances()
-
-        # 3. آماده‌سازی پرداخت‌ها
+        # 2. آماده‌سازی
         payments_df, unresolved_items = prepare_payments(
             df_pay, df_chk, pd.DataFrame()
         )
 
-        # 4. ساخت دیتافریم نهایی برای اکسل
+        # 3. ساخت دیتافریم
         result_data = []
-
-        # مواردی که کد پیدا شد
         resolved_df = payments_df[payments_df["ResolvedCustomer"].notna()].copy(
         )
-        # فیلتر کردن موارد "یافت نشد" از لیست resolved برای نمایش تمیزتر (اختیاری)
         resolved_df = resolved_df[resolved_df["ResolvedCustomer"]
                                   != "یافت نشد"]
 
@@ -4662,7 +2839,6 @@ async def process_direct_download(
                     "Status": "کد یافت شد"
                 })
 
-        # مواردی که کد پیدا نشد (یافت نشد)
         if unresolved_items:
             unresolved_df = pd.DataFrame(unresolved_items)
             grouped_unresolved = unresolved_df.groupby("Name").agg({
@@ -4672,43 +2848,22 @@ async def process_direct_download(
                 result_data.append({
                     "CustomerName": row["Name"],
                     "TotalAmount": row["Amount"],
-                    "CustomerCode": "یافت نشد",  # <--- ستون کد را "یافت نشد" پر میکنیم
+                    "CustomerCode": "یافت نشد",
                     "Status": "کد یافت نشد"
                 })
 
         df_result = pd.DataFrame(result_data)
-
-        # 5. ذخیره فایل در دیسک (کنار فایل‌های پروژه)
         df_result.to_excel(OUTPUT_CODES_FILENAME, index=False)
 
-        # 6. نمایش صفحه نتیجه
-        html = f"""
-        <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>فایل اکسل ساخته شد</title>
-                {BASE_CSS}
-            </head>
-            <body>
-                <div class="container">
-                    {nav_html}
-                    <h1>عملیات با موفقیت انجام شد ✅</h1>
-                    <p>فایل اکسل حاوی کدهای مشتری با موفقیت ساخته و ذخیره شد.</p>
-                    
-                    <div style="background: #ecfdf5; padding: 20px; border-radius: 8px; border: 1px solid #10b981; margin-bottom: 20px;">
-                        <h3>📂 نام فایل: <b>{OUTPUT_CODES_FILENAME}</b></h3>
-                        <p>این فایل در کنار فایل‌های اجرایی برنامه ذخیره شده است.</p>
-                        <a href="/download-generated-file" class="pill-button" style="background-color: #059669; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block; margin-top: 10px;">
-                            دانلود فایل ساخته شده
-                        </a>
-                    </div>
-
-                    <a href="/direct-download-codes">بازگشت و ساخت فایل جدید</a>
-                </div>
-            </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
+        return templates.TemplateResponse(
+            "direct_download_result.html",
+            {
+                "request": request,
+                "title": "فایل اکسل ساخته شد",
+                "active_tab": "main",
+                "filename": OUTPUT_CODES_FILENAME
+            }
+        )
 
     except Exception as e:
         print(f"Error: {e}")
@@ -4717,9 +2872,6 @@ async def process_direct_download(
 
 @app.get("/download-generated-file")
 async def download_generated_file():
-    """
-    دانلود فایلی که در مرحله قبل ساخته شده است.
-    """
     if not os.path.exists(OUTPUT_CODES_FILENAME):
         return HTMLResponse(content="<h1>فایل یافت نشد. لطفاً ابتدا فایل را بسازید.</h1>")
 
@@ -4730,108 +2882,12 @@ async def download_generated_file():
     )
 
 
-@app.post("/blacklist-item")
-async def blacklist_item(request: Request):
-    """
-    حذف مشتری از لیست اصلی و افزودن آن به لیست سیاه (blacklist.xlsx).
-    """
-    try:
-        body = await request.json()
-        customer_name = body.get("customer_name")
-
-        if not customer_name:
-            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
-
-        bind_file_path = "customer_codes_bind.xlsx"
-        blacklist_file_path = "blacklist.xlsx"
-
-        # ۱. حذف از فایل اصلی
-        if os.path.exists(bind_file_path):
-            df_bind = pd.read_excel(bind_file_path)
-            initial_len = len(df_bind)
-            # حذف ردیف‌هایی که نام مشتری با نام ارسالی برابر است
-            df_bind = df_bind[df_bind["CustomerName"] != customer_name]
-
-            if len(df_bind) < initial_len:
-                df_bind.to_excel(bind_file_path, index=False)
-            else:
-                return JSONResponse(content={"status": "error", "message": "مشتری در لیست اصلی یافت نشد"}, status_code=404)
-        else:
-            return JSONResponse(content={"status": "error", "message": "فایل لیست اصلی یافت نشد"}, status_code=404)
-
-        # ۲. افزودن به لیست سیاه
-        # خواندن لیست سیاه موجود (اگر وجود ندارد، دیتافریم جدید می‌سازیم)
-        if os.path.exists(blacklist_file_path):
-            df_black = pd.read_excel(blacklist_file_path)
-        else:
-            df_black = pd.DataFrame(columns=["CustomerName", "DateAdded"])
-
-        # بررسی تکراری نبودن
-        if not df_black.empty and "CustomerName" in df_black.columns:
-            if customer_name in df_black["CustomerName"].values:
-                return JSONResponse(content={"status": "ok", "message": "قبلاً در لیست سیاه وجود داشت."})
-
-        # افزودن ردیف جدید
-        new_row = pd.DataFrame([{
-            "CustomerName": customer_name,
-            "DateAdded": pd.Timestamp.now()
-        }])
-        df_black = pd.concat([df_black, new_row], ignore_index=True)
-        df_black.to_excel(blacklist_file_path, index=False)
-
-        return JSONResponse(content={"status": "ok", "message": "با موفقیت به لیست سیاه منتقل شد."})
-
-    except Exception as e:
-        print(f"Error blacklisting item: {e}")
-        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
-
-
-@app.post("/unblacklist-item")
-async def unblacklist_item(request: Request):
-    """
-    حذف مشتری از لیست سیاه (blacklist.xlsx).
-    """
-    try:
-        body = await request.json()
-        customer_name = body.get("customer_name")
-        if not customer_name:
-            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
-
-        blacklist_file_path = "blacklist.xlsx"
-
-        if os.path.exists(blacklist_file_path):
-            df_black = pd.read_excel(blacklist_file_path)
-            initial_len = len(df_black)
-
-            # نرمال‌سازی نام برای مقایسه دقیق
-            norm_target = normalize_persian_name(customer_name)
-
-            # فرض بر این است که ستون CustomerName در لیست سیاه هم نرمال نیست یا باید چک شود
-            # اما برای سادگی و اطمینان، هر دو طرف را نرمال می‌کنیم
-            if "CustomerName" in df_black.columns:
-                df_black["Normalized"] = df_black["CustomerName"].apply(
-                    normalize_persian_name)
-                df_black = df_black[df_black["Normalized"] != norm_target]
-                df_black = df_black.drop(
-                    columns=["Normalized"])  # حذف ستون کمکی
-
-            if len(df_black) < initial_len:
-                df_black.to_excel(blacklist_file_path, index=False)
-                return JSONResponse(content={"status": "ok", "message": "با موفقیت از لیست سیاه حذف شد."})
-            else:
-                return JSONResponse(content={"status": "error", "message": "مشتری در لیست سیاه یافت نشد"}, status_code=404)
-        else:
-            return JSONResponse(content={"status": "error", "message": "فایل لیست سیاه یافت نشد"}, status_code=404)
-
-    except Exception as e:
-        print(f"Error unblacklisting item: {e}")
-        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
-
+# ==========================================
+# 3. Marketers Functions (مدیریت بازاریاب‌ها)
+# ==========================================
 
 @app.get("/marketers", response_class=HTMLResponse)
 async def marketers_page(request: Request):
-    nav_html = build_nav("marketers")
-
     marketers_list = []
     if os.path.exists(MARKETERS_PATH):
         try:
@@ -4843,79 +2899,15 @@ async def marketers_page(request: Request):
         except:
             pass
 
-    # ساخت HTML جدول
-    rows_html = ""
-    for name in marketers_list:
-        rows_html += f"""
-        <tr>
-            <td>{name}</td>
-            <td style="width: 80px; text-align: center;">
-                <form action="/marketers/delete" method="post" style="margin:0;">
-                    <input type="hidden" name="marketer_name" value="{name}">
-                    <button type="submit" style="background:none; border:none; cursor:pointer; color:red; font-size:16px;">&times;</button>
-                </form>
-            </td>
-        </tr>
-        """
-
-    if not rows_html:
-        rows_html = "<tr><td colspan='2' style='text-align:center; color:#999;'>هیچ بازاریابی تعریف نشده است.</td></tr>"
-
-    html = f"""
-    <html>
-    <head>
-        <title>مدیریت بازاریاب‌ها</title>
-        {BASE_CSS}
-    </head>
-    <body>
-        <div class="container">
-            {nav_html}
-            <h1>مدیریت لیست سفید بازاریاب‌ها</h1>
-            <p style="font-size:13px; color:#555;">فقط فروش‌هایی محاسبه می‌شوند که نام بازاریاب آن‌ها در این لیست باشد.</p>
-            
-            <div class="upload-grid">
-                <!-- کارت افزودن دستی -->
-                <div class="upload-card">
-                    <div class="upload-card-title">افزودن بازاریاب جدید</div>
-                    <form action="/marketers/add" method="post" style="display:flex; gap:10px;">
-                        <input type="text" name="new_marketer" placeholder="نام بازاریاب" required style="flex:1;">
-                        <button type="submit" class="pill-button">افزودن</button>
-                    </form>
-                    
-                    <hr style="margin: 15px 0;">
-                    
-                    <div class="upload-card-title">آپلود اکسل بازاریاب‌ها</div>
-                    <form action="/marketers/upload" method="post" enctype="multipart/form-data">
-                        <input type="file" name="file" accept=".xlsx" required style="font-size:12px;">
-                        <button type="submit" class="pill-button" style="margin-top:5px;">آپلود و جایگزینی</button>
-                    </form>
-                    <p style="font-size:11px; color:#888; margin-top:5px;">فایل اکسل باید ستونی به نام MarketerName یا "نام بازاریاب" داشته باشد.</p>
-                </div>
-
-                <!-- جدول لیست -->
-                <div class="upload-card">
-                    <div class="table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>نام بازاریاب</th>
-                                    <th>حذف</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows_html}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            
-            <a class="footer-link" href="/">بازگشت به خانه</a>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+    return templates.TemplateResponse(
+        "marketers.html",
+        {
+            "request": request,
+            "title": "مدیریت بازاریاب‌ها",
+            "active_tab": "marketers",
+            "marketers_list": marketers_list
+        }
+    )
 
 
 @app.post("/marketers/add")
@@ -4966,12 +2958,10 @@ async def upload_marketers(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         df = pd.read_excel(io.BytesIO(contents))
-        # پیدا کردن ستون مناسب
         col = next((c for c in df.columns if "marketer" in c.lower()
                    or "visitor" in c.lower() or "بازاریاب" in c), None)
 
         if col:
-            # ذخیره استاندارد با هدر MarketerName
             clean_list = df[col].dropna().unique().tolist()
             save_marketers_list(clean_list)
     except Exception as e:
@@ -4979,12 +2969,14 @@ async def upload_marketers(file: UploadFile = File(...)):
 
     return RedirectResponse(url="/marketers", status_code=303)
 
+# ==========================================
+# 4. Product Blacklist Functions (لیست سیاه کالا)
+# ==========================================
+
 
 @app.get("/product-blacklist", response_class=HTMLResponse)
 async def view_product_blacklist(request: Request):
-    # ---------------------------------------------------------
-    # 1. لود کردن مپ کالاها (برای پیشنهاد در جستجو و نمایش نام)
-    # ---------------------------------------------------------
+    # 1. لود مپ کالا
     try:
         df_map = load_product_group_map()
         if not df_map.empty:
@@ -4993,21 +2985,15 @@ async def view_product_blacklist(request: Request):
     except Exception:
         df_map = pd.DataFrame(columns=["ProductCode", "ProductName"])
 
-    # ساختن گزینه‌های دیتالیست (برای کمک به پر کردن کد)
-    datalist_options = ""
+    # 2. آماده‌سازی پیشنهادات
+    product_suggestions = []
     if not df_map.empty:
         df_sorted = df_map.sort_values(by="ProductName", na_position='last')
-        for _, row in df_sorted.iterrows():
-            c = row.get("ProductCode", "")
-            n = row.get("ProductName", "")
-            if c:
-                # نمایش: نام کالا (کد)
-                datalist_options += f'<option value="{c}">{n}</option>'
+        product_suggestions = df_sorted[[
+            "ProductCode", "ProductName"]].to_dict(orient="records")
 
-    # ---------------------------------------------------------
-    # 2. لود کردن لیست سیاه فعلی
-    # ---------------------------------------------------------
-    blacklist_data = []
+    # 3. لود لیست سیاه
+    blacklist_data = pd.DataFrame()
     if os.path.exists(PRODUCT_BLACKLIST_PATH):
         try:
             df_bl = pd.read_excel(PRODUCT_BLACKLIST_PATH)
@@ -5015,158 +3001,42 @@ async def view_product_blacklist(request: Request):
                 df_bl["ProductCode"] = df_bl["ProductCode"].apply(
                     canonicalize_code)
                 blacklist_data = df_bl
-            else:
-                blacklist_data = pd.DataFrame()
-        except Exception:
-            blacklist_data = pd.DataFrame()
-    else:
-        blacklist_data = pd.DataFrame()
+        except Exception as e:
+            print(f"Error loading blacklist: {e}")
 
-    # ---------------------------------------------------------
-    # 3. آماده‌سازی داده‌ها برای جدول
-    # ---------------------------------------------------------
+    # 4. ترکیب داده‌ها
     final_list = []
-    if not isinstance(blacklist_data, list) and not blacklist_data.empty:
-        # تبدیل به دیکشنری
+    if not blacklist_data.empty:
         records = blacklist_data.to_dict(orient="records")
 
         for item in records:
             p_code = item.get("ProductCode", "")
-            # اولویت نام: 1. نامی که دستی وارد شده (در لیست سیاه هست) 2. نام از مپ کالاها
             p_name_manual = item.get("ProductName", "")
 
             p_name_final = ""
+            # اگر نام در لیست سیاه وجود دارد، از آن استفاده کن
             if pd.notna(p_name_manual) and str(p_name_manual).strip():
                 p_name_final = str(p_name_manual).strip()
+            # در غیر این صورت از مپ کالا بخوان
             else:
-                # جستجو در مپ
                 if not df_map.empty:
                     match = df_map[df_map["ProductCode"] == p_code]
                     if not match.empty:
                         p_name_final = match.iloc[0]["ProductName"]
 
-            # افزودن به لیست نهایی
             item["DisplayName"] = p_name_final
             final_list.append(item)
 
-    # ---------------------------------------------------------
-    # 4. تولید HTML جدول
-    # ---------------------------------------------------------
-    rows_html = ""
-    if final_list:
-        for item in final_list:
-            p_code = item.get("ProductCode", "")
-            p_name = item.get("DisplayName", "")
-            d_added = item.get("DateAdded", "")
-
-            if not p_name:
-                p_name = '<span style="color:#9ca3af; font-style:italic;">---</span>'
-
-            rows_html += f'''
-            <tr>
-                <td style="font-weight:bold; font-family: monospace;">{p_code}</td>
-                <td>{p_name}</td>
-                <td style="direction: ltr; text-align: right;">{d_added}</td>
-                <td style="text-align: center;">
-                    <form action="/product-blacklist/delete" method="post" style="margin:0;">
-                        <input type="hidden" name="code" value="{p_code}">
-                        <button type="submit" style="background: #ef4444; padding: 4px 12px; font-size: 11px; box-shadow: none;">حذف</button>
-                    </form>
-                </td>
-            </tr>
-            '''
-        table_content = f'''
-        <table>
-            <thead>
-                <tr>
-                    <th style="width: 15%;">کد کالا</th>
-                    <th style="width: 50%;">نام کالا</th>
-                    <th style="width: 20%;">تاریخ افزودن</th>
-                    <th style="width: 15%;">عملیات</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
-        '''
-    else:
-        table_content = '<div class="message message-error">لیست سیاه کالا خالی است.</div>'
-
-    nav_html = build_nav("product-blacklist")
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="fa">
-    <head>
-        <meta charset="UTF-8">
-        <title>لیست سیاه کالا</title>
-        {BASE_CSS}
-    </head>
-    <body>
-    <div class="container">
-        {nav_html}
-
-        <h1>مدیریت لیست سیاه کالا (Product Blacklist)</h1>
-        <p>کالاهای این لیست در محاسبه پورسانت نادیده گرفته می‌شوند.</p>
-
-        <!-- باکس فرم‌ها -->
-        <div style="background: rgba(255,255,255,0.6); padding: 20px; border-radius: 15px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
-            <div style="display: flex; gap: 30px; flex-wrap: wrap;">
-                
-                <!-- فرم افزودن دستی (دو باکسه) -->
-                <div style="flex: 2; min-width: 350px;">
-                    <h2>افزودن دستی کالا</h2>
-                    <form action="/product-blacklist/add" method="post" class="form-row" style="display: flex; gap: 10px; align-items: flex-end;">
-                        
-                        <div style="flex: 1;">
-                            <label style="display:block; margin-bottom:5px;">کد کالا <span style="color:red">*</span></label>
-                            <input list="products_list" name="code" type="text" placeholder="کد را وارد یا انتخاب کنید" required 
-                                   style="width: 100%;">
-                            <datalist id="products_list">
-                                {datalist_options}
-                            </datalist>
-                        </div>
-
-                        <div style="flex: 2;">
-                            <label style="display:block; margin-bottom:5px;">نام کالا (اختیاری)</label>
-                            <input type="text" name="name" placeholder="نام کالا را تایپ کنید..." style="width: 100%;">
-                        </div>
-
-                        <div style="flex: 0 0 auto;">
-                             <button type="submit" style="margin-bottom: 2px;">افزودن</button>
-                        </div>
-                    </form>
-                    <small style="color: #64748b;">اگر نام را وارد نکنید، سیستم سعی می‌کند آن را از فایل کالاها پیدا کند.</small>
-                </div>
-
-                <!-- فرم آپلود -->
-                <div style="flex: 1; min-width: 300px; border-right: 1px solid #cbd5e1; padding-right: 30px;">
-                    <h2>آپلود اکسل (کلی)</h2>
-                    <form action="/product-blacklist/upload" method="post" enctype="multipart/form-data" class="form-row" style="display: flex; gap: 10px; align-items: flex-end;">
-                        <div style="width:100%">
-                             <label style="display:block; margin-bottom:5px;">فایل اکسل</label>
-                             <input type="file" name="file" accept=".xlsx" required>
-                        </div>
-                        <button type="submit" style="background: linear-gradient(135deg, #059669, #10b981); margin-bottom: 2px;">آپلود</button>
-                    </form>
-                    <small>فایل اکسل باید ستونی به نام <b>ProductCode</b> داشته باشد.</small>
-                </div>
-
-            </div>
-        </div>
-
-        <!-- جدول -->
-        <div class="table-wrapper">
-            {table_content}
-        </div>
-
-    </div>
-    </body>
-    </html>
-    """
-
-    return HTMLResponse(content=html_content)
+    return templates.TemplateResponse(
+        "product_blacklist.html",
+        {
+            "request": request,
+            "title": "لیست سیاه کالا",
+            "active_tab": "product-blacklist",
+            "blacklist_data": final_list,
+            "product_suggestions": product_suggestions
+        }
+    )
 
 
 @app.post("/product-blacklist/add")
@@ -5204,7 +3074,6 @@ async def upload_product_blacklist(file: UploadFile = File(...)):
     contents = await file.read()
     try:
         df_new = pd.read_excel(io.BytesIO(contents))
-        # پیدا کردن ستون مناسب
         target_col = None
         for c in df_new.columns:
             if "code" in str(c).lower() or "کد" in str(c):
@@ -5220,6 +3089,93 @@ async def upload_product_blacklist(file: UploadFile = File(...)):
             save_product_blacklist(list(new_codes))
 
     except Exception as e:
-        print("Upload Error:", e)
+        print(f"Upload Error: {e}")
 
     return RedirectResponse(url="/product-blacklist", status_code=303)
+
+
+# ==========================================
+# 5. Blacklist JSON APIs (عملیات لیست سیاه مشتری)
+# ==========================================
+
+@app.post("/blacklist-item")
+async def blacklist_item(request: Request):
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+
+        if not customer_name:
+            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
+
+        bind_file_path = "customer_codes_bind.xlsx"
+        blacklist_file_path = "blacklist.xlsx"
+
+        # حذف از فایل اصلی
+        if os.path.exists(bind_file_path):
+            df_bind = pd.read_excel(bind_file_path)
+            initial_len = len(df_bind)
+            df_bind = df_bind[df_bind["CustomerName"] != customer_name]
+
+            if len(df_bind) < initial_len:
+                df_bind.to_excel(bind_file_path, index=False)
+            else:
+                return JSONResponse(content={"status": "error", "message": "مشتری در لیست اصلی یافت نشد"}, status_code=404)
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل لیست اصلی یافت نشد"}, status_code=404)
+
+        # افزودن به لیست سیاه
+        if os.path.exists(blacklist_file_path):
+            df_black = pd.read_excel(blacklist_file_path)
+        else:
+            df_black = pd.DataFrame(columns=["CustomerName", "DateAdded"])
+
+        if not df_black.empty and "CustomerName" in df_black.columns:
+            if customer_name in df_black["CustomerName"].values:
+                return JSONResponse(content={"status": "ok", "message": "قبلاً در لیست سیاه وجود داشت."})
+
+        new_row = pd.DataFrame([{
+            "CustomerName": customer_name,
+            "DateAdded": pd.Timestamp.now()
+        }])
+        df_black = pd.concat([df_black, new_row], ignore_index=True)
+        df_black.to_excel(blacklist_file_path, index=False)
+
+        return JSONResponse(content={"status": "ok", "message": "با موفقیت به لیست سیاه منتقل شد."})
+
+    except Exception as e:
+        print(f"Error blacklisting item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/unblacklist-item")
+async def unblacklist_item(request: Request):
+    try:
+        body = await request.json()
+        customer_name = body.get("customer_name")
+        if not customer_name:
+            return JSONResponse(content={"status": "error", "message": "نام مشتری ارسال نشده است"}, status_code=400)
+
+        blacklist_file_path = "blacklist.xlsx"
+
+        if os.path.exists(blacklist_file_path):
+            df_black = pd.read_excel(blacklist_file_path)
+            initial_len = len(df_black)
+            norm_target = normalize_persian_name(customer_name)
+
+            if "CustomerName" in df_black.columns:
+                df_black["Normalized"] = df_black["CustomerName"].apply(
+                    normalize_persian_name)
+                df_black = df_black[df_black["Normalized"] != norm_target]
+                df_black = df_black.drop(columns=["Normalized"])
+
+            if len(df_black) < initial_len:
+                df_black.to_excel(blacklist_file_path, index=False)
+                return JSONResponse(content={"status": "ok", "message": "با موفقیت از لیست سیاه حذف شد."})
+            else:
+                return JSONResponse(content={"status": "error", "message": "مشتری در لیست سیاه یافت نشد"}, status_code=404)
+        else:
+            return JSONResponse(content={"status": "error", "message": "فایل لیست سیاه یافت نشد"}, status_code=404)
+
+    except Exception as e:
+        print(f"Error unblacklisting item: {e}")
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)

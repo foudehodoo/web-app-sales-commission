@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>{{ title }}</h1>
+    <p>کالاهای این لیست در محاسبه پورسانت نادیده گرفته می‌شوند.</p>
+
+    <!-- بخش فرم‌ها -->
+    <div
+        style="background: rgba(255,255,255,0.6); padding: 20px; border-radius: 15px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
+        <div style="display: flex; gap: 30px; flex-wrap: wrap;">
+
+            <!-- فرم افزودن دستی -->
+            <div style="flex: 2; min-width: 350px;">
+                <h2>افزودن دستی کالا</h2>
+                <form action="/product-blacklist/add" method="post"
+                    style="display: flex; gap: 10px; align-items: flex-end;">
+
+                    <div style="flex: 1;">
+                        <label style="display:block; margin-bottom:5px;">کد کالا <span
+                                style="color:red">*</span></label>
+                        <input list="products_list" name="code" type="text" placeholder="کد را وارد یا انتخاب کنید"
+                            required style="width: 100%;">
+                        <datalist id="products_list">
+                            {% for prod in product_suggestions %}
+                            <option value="{{ prod.ProductCode }}">{{ prod.ProductName }}</option>
+                            {% endfor %}
+                        </datalist>
+                    </div>
+
+                    <div style="flex: 2;">
+                        <label style="display:block; margin-bottom:5px;">نام کالا (اختیاری)</label>
+                        <input type="text" name="name" placeholder="نام کالا را تایپ کنید..." style="width: 100%;">
+                    </div>
+
+                    <div style="flex: 0 0 auto;">
+                        <button type="submit" style="margin-bottom: 2px;">افزودن</button>
+                    </div>
+                </form>
+                <small style="color: #64748b;">اگر نام را وارد نکنید، سیستم سعی می‌کند آن را از فایل کالاها پیدا
+                    کند.</small>
+            </div>
+
+            <!-- فرم آپلود -->
+            <div style="flex: 1; min-width: 300px; border-right: 1px solid #cbd5e1; padding-right: 30px;">
+                <h2>آپلود اکسل (کلی)</h2>
+                <form action="/product-blacklist/upload" method="post" enctype="multipart/form-data"
+                    style="display: flex; gap: 10px; align-items: flex-end;">
+                    <div style="width:100%">
+                        <label style="display:block; margin-bottom:5px;">فایل اکسل</label>
+                        <input type="file" name="file" accept=".xlsx" required>
+                    </div>
+                    <button type="submit"
+                        style="background: linear-gradient(135deg, #059669, #10b981); margin-bottom: 2px;">آپلود</button>
+                </form>
+                <small>فایل اکسل باید ستونی به نام <b>ProductCode</b> داشته باشد.</small>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- جدول -->
+    <div class="table-wrapper">
+        {% if blacklist_data %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 15%;">کد کالا</th>
+                    <th style="width: 50%;">نام کالا</th>
+                    <th style="width: 20%;">تاریخ افزودن</th>
+                    <th style="width: 15%;">عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in blacklist_data %}
+                <tr>
+                    <td style="font-weight:bold; font-family: monospace;">{{ item.ProductCode }}</td>
+                    <td>{{ item.DisplayName }}</td>
+                    <td style="direction: ltr; text-align: right;">{{ item.DateAdded or "" }}</td>
+                    <td style="text-align: center;">
+                        <form action="/product-blacklist/delete" method="post" style="margin:0;"
+                            onsubmit="return confirm('آیا از حذف این کالا اطمینان دارید؟');">
+                            <input type="hidden" name="code" value="{{ item.ProductCode }}">
+                            <button type="submit"
+                                style="background: #ef4444; padding: 4px 12px; font-size: 11px;">حذف</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="message message-error">لیست سیاه کالا خالی است.</div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>رفع اشکال کدهای مشتری</h1>
+
+{% if error_message %}
+<div class="message message-error">
+    {{ error_message | safe }}
+</div>
+{% else %}
+
+<!-- دیباگ -->
+<div
+    style="background:#f0fdf4; color:#166534; padding:10px; border:1px solid #bbf7d0; margin-bottom:20px; border-radius:5px; font-size:12px;">
+    <strong>وضعیت سیستم:</strong><br>
+    - تعداد کل ردیف‌ها: {{ total_rows }}<br>
+    - تعداد کدهای یافت نشده: {{ unresolved_count }}<br>
+    - تعداد کدهای یافت شده: {{ resolved_count }}
+</div>
+
+<div style="margin-bottom: 15px;">
+    <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن سطر جدید</button>
+</div>
+
+<h2>🔴 لیست مشتریانی که کدشان یافت نشد</h2>
+<p>لطفاً کد مشتری صحیح را در کادر روبروی نام وارد کنید.</p>
+
+<form id="fix-form">
+    <div class="table-wrapper">
+        <table class="data-table table-unresolved">
+            <thead>
+                <tr>
+                    <th>نام مشتری</th>
+                    <th>کد مشتری (اصلاح شده)</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if unresolved_items %}
+                {% for item in unresolved_items %}
+                <tr class="unresolved-row">
+                    <td>
+                        <input type="text" name="fix_name" value="{{ item.name }}" readonly
+                            style="border:none; background:transparent; width:100%;" />
+                    </td>
+                    <td>
+                        <input type="text" name="fix_code" placeholder="کد مشتری را وارد کنید" style="width: 100%;" />
+                    </td>
+                    <td>
+                        <button type="button" class="pill-button" style="padding:5px 10px;"
+                            onclick="removeAndBlacklistRow(this)">❌</button>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan='3' style='text-align:center; color:green;'>همه کدها با موفقیت یافت شدند! ✅</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    <div style="margin-top: 20px;">
+        <button type="button" class="pill-button" onclick="submitFixes()"
+            style="background-color: #10b981; color: white;">💾 ذخیره تغییرات</button>
+    </div>
+</form>
+
+<hr />
+
+<h2>🟢 لیست مشتریانی که کدشان یافت شد</h2>
+<div class="table-wrapper">
+    <table class="data-table table-resolved">
+        <thead>
+            <tr>
+                <th>نام مشتری</th>
+                <th>کد مشتری</th>
+                <th>عملیات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in resolved_items %}
+            <tr class="resolved-row">
+                <td>{{ item.name }}</td>
+                <td style="color: green; font-weight: bold;">{{ item.code }}</td>
+                <td>
+                    {% if not item.is_blacklisted %}
+                    <button type="button" class="pill-button" onclick="editResolvedRow(this)">ویرایش</button>
+                    <button type="button" class="pill-button" style="color:red;"
+                        onclick="deleteResolvedRow(this)">حذف</button>
+                    <button type="button" class="pill-button" style="background:Pink; color:Black; padding:5px 10px;"
+                        onclick="addToBlacklist('{{ item.name }}')">افزودن به لیست سیاه 🚫</button>
+                    {% else %}
+                    <button type="button" class="pill-button" style="background:#f59e0b; color:white; padding:5px 10px;"
+                        onclick="removeFromBlacklist('{{ item.name }}')">خروج از لیست سیاه 🚫</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<a class="footer-link" href="/">بازگشت به صفحه اصلی</a>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function removeRow(btn) {
+        const row = btn.closest('tr');
+        row.remove();
+    }
+
+    function removeAndBlacklistRow(btn) {
+        const row = btn.closest('tr');
+        const nameInput = row.querySelector('input[name="fix_name"]');
+        const name = nameInput ? nameInput.value : "";
+        if (confirm("آیا از صرف نظر از این کد اطمینان دارید؟")) {
+            fetch('/blacklist-item', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "customer_name": name })
+            })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'ok') {
+                        row.remove();
+                        alert('نام مشتری به لیست سیاه اضافه و از لیست حذف شد.');
+                    } else {
+                        alert('خطا: ' + result.message);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+    }
+
+    function addNewRow() {
+        const tbody = document.querySelector('#fix-form tbody');
+        const newRow = document.createElement('tr');
+        newRow.className = 'unresolved-row';
+        newRow.innerHTML = `
+        <td>
+            <input type="text" name="fix_name" placeholder="نام مشتری جدید" style="width:100%;" />
+        </td>
+        <td>
+            <input type="text" name="fix_code" placeholder="کد مشتری" style="width: 100%;" />
+        </td>
+        <td>
+            <button type="button" class="pill-button" style="background:#ef4444; color:white; padding:5px 10px;" onclick="removeRow(this)">❌</button>
+        </td>
+    `;
+        tbody.appendChild(newRow);
+    }
+
+    function editResolvedRow(btn) {
+        const row = btn.closest('tr');
+        const nameCell = row.cells[0];
+        const codeCell = row.cells[1];
+        const currentName = nameCell.innerText;
+        const currentCode = codeCell.innerText;
+        const newName = prompt("ویرایش نام مشتری:", currentName);
+        if (newName === null) return;
+        const newCode = prompt("ویرایش کد مشتری:", currentCode);
+        if (newCode === null) return;
+        nameCell.innerText = newName;
+        codeCell.innerText = newCode;
+        saveResolvedEdit(currentName, newName, newCode);
+    }
+
+    function deleteResolvedRow(btn) {
+        const row = btn.closest('tr');
+        const nameCell = row.cells[0];
+        const nameToDelete = nameCell.innerText;
+        if (confirm("آیا از حذف این مورد اطمینان دارید؟")) {
+            fetch('/delete-resolved-item', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "customer_name": nameToDelete })
+            })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'ok') {
+                        row.remove();
+                        alert('مورد با موفقیت حذف شد.');
+                    } else {
+                        alert('خطا در حذف: ' + result.message);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+    }
+
+    function saveResolvedEdit(oldName, newName, newCode) {
+        fetch('/edit-resolved-item', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                "old_name": oldName,
+                "new_name": newName,
+                "new_code": newCode
+            })
+        })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status !== 'ok') {
+                    alert('خطا در ذخیره ویرایش: ' + result.message);
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('خطا در ارتباط با سرور');
+                location.reload();
+            });
+    }
+
+    function addToBlacklist(name) {
+        if (confirm(`آیا می‌خواهید «${name}» را به لیست سیاه اضافه کنید؟`)) {
+            fetch('/blacklist-item', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "customer_name": name })
+            })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'ok') {
+                        alert('نام مشتری به لیست سیاه اضافه شد.');
+                        location.reload();
+                    } else {
+                        alert('خطا: ' + result.message);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+    }
+
+    function removeFromBlacklist(name) {
+        if (confirm(`آیا می‌خواهید «${name}» را از لیست سیاه خارج کنید؟`)) {
+            fetch('/unblacklist-item', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ "customer_name": name })
+            })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'ok') {
+                        alert('نام مشتری از لیست سیاه حذف شد.');
+                        location.reload();
+                    } else {
+                        alert('خطا: ' + result.message);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+    }
+
+    function submitFixes() {
+        const form = document.getElementById('fix-form');
+        const formData = new FormData(form);
+        const data = [];
+        const names = formData.getAll('fix_name');
+        const codes = formData.getAll('fix_code');
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i].trim();
+            const code = codes[i].trim();
+            if (name && code) {
+                data.push({
+                    "CustomerName": name,
+                    "CustomerCode": code
+                });
+            }
+        }
+        if (data.length === 0) {
+            alert("هیچ کدی برای ذخیره وارد نشده است.");
+            return;
+        }
+        fetch('/manual-map-save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'ok') {
+                    alert('کدها با موفقیت ذخیره شدند و فایل اکسل بروزرسانی شد.');
+                    location.reload();
+                } else {
+                    alert('خطا در ذخیره: ' + result.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('خطا در ارتباط با سرور');
+            });
+    }
+</script>
+{% endblock %}

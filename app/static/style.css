@@ -1,0 +1,648 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
+    direction: rtl;
+    margin: 0;
+    min-height: 100vh;
+
+    /* گرادیانت چندلایه  */
+    background:
+        radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.55) 0, transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(236, 72, 153, 0.35) 0, transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.35) 0, transparent 55%),
+        linear-gradient(135deg, #eef2ff, #f9fafb 40%, #fdf2ff 100%);
+}
+
+.container {
+    max-width: 1150px;
+    margin: 32px auto;
+    background: rgba(255, 255, 255, 0.92);
+    /* نیمه‌شفاف برای افکت شیشه‌ای */
+    padding: 24px 32px 32px;
+    border-radius: 24px;
+    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    backdrop-filter: blur(18px);
+    /* اگر مرورگر پشتیبانی کند 🤌 */
+}
+
+h1 {
+    margin-top: 0;
+    color: #111827;
+    font-size: 22px;
+}
+
+h2 {
+    color: #111827;
+    font-size: 18px;
+    margin-top: 24px;
+}
+
+p {
+    color: #374151;
+    font-size: 13px;
+}
+
+button {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #ffffff;
+    border: none;
+    border-radius: 999px;
+    padding: 9px 18px;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 6px 14px rgba(37, 99, 235, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+button:hover {
+    background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
+}
+
+label {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+input[type="file"],
+input[type="number"],
+input[type="text"],
+select {
+    width: 100%;
+    padding: 7px 9px;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    font-size: 13px;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    background-color: #f9fafb;
+}
+
+input[type="file"]:focus,
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+    background-color: #ffffff;
+}
+
+.form-row {
+    margin-bottom: 14px;
+}
+
+small {
+    font-size: 11px;
+    color: #6b7280;
+}
+
+/* ---------------- نوار بالای صفحه (سه تب اصلی) ---------------- */
+
+.navbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    border-radius: 999px;
+    background: #f3f4ff;
+    padding: 4px;
+}
+
+.navbar a {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: #4b5563;
+    text-decoration: none;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.navbar a:hover {
+    background: #e5e7ff;
+    color: #111827;
+}
+
+.navbar a.active {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.45);
+}
+
+/* ---------------- کارت‌های راهنمای صفحه اصلی ---------------- */
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 18px 0 10px;
+}
+
+.summary-card {
+    position: relative;
+    background: rgba(248, 250, 252, 0.92);
+    border-radius: 18px;
+    padding: 12px 14px 10px 14px;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.summary-card::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+}
+
+.summary-sales::before {
+    background: linear-gradient(180deg, #2563eb, #60a5fa);
+}
+
+.summary-payments::before {
+    background: linear-gradient(180deg, #059669, #34d399);
+}
+
+.summary-checks::before {
+    background: linear-gradient(180deg, #d97706, #fbbf24);
+}
+
+.summary-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
+    border-color: rgba(148, 163, 184, 0.7);
+    background: rgba(255, 255, 255, 0.98);
+}
+
+.summary-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.summary-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.summary-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    background: #e5edff;
+}
+
+.summary-sales .summary-icon {
+    background: #e0ecff;
+}
+
+.summary-payments .summary-icon {
+    background: #dcfce7;
+}
+
+.summary-checks .summary-icon {
+    background: #fef3c7;
+}
+
+.summary-title-main {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.summary-title-sub {
+    font-size: 11px;
+    color: #6b7280;
+}
+
+.summary-card-body {
+    margin-top: 4px;
+}
+
+.hint-title {
+    font-size: 11px;
+    color: #4b5563;
+    margin-bottom: 4px;
+}
+
+.hint-note {
+    font-size: 11px;
+    color: #9ca3af;
+    margin-top: 4px;
+}
+
+.pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.badge-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: #eef2ff;
+    color: #3730a3;
+    white-space: nowrap;
+}
+
+.pill-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 2px;
+    margin-bottom: 2px;
+    color: #4b5563;
+}
+
+.pill-section {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+.pill-button {
+    border-radius: 999px;
+    border: 0;
+    padding: 3px 10px;
+    font-size: 11px;
+    background: #e5edff;
+    color: #1d4ed8;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.pill-button:hover {
+    background: #dbeafe;
+    transform: none;
+    box-shadow: none;
+}
+
+.hint-hidden {
+    display: none;
+}
+
+/* ---------------- جدول‌ها ---------------- */
+
+.table-wrapper {
+    overflow-x: auto;
+    margin-top: 8px;
+}
+
+.table-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.table-wrapper th,
+.table-wrapper td {
+    border: 1px solid #e5e7eb;
+    padding: 6px 8px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.table-wrapper th {
+    background: #e5f0ff;
+    color: #111827;
+    font-weight: 600;
+}
+
+.table-wrapper tr:nth-child(even) {
+    background: #f9fafb;
+}
+
+.table-wrapper tr:hover td {
+    background: #eef2ff;
+}
+
+/* ---------------- بج‌ها ---------------- */
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+}
+
+.badge-priority-cash {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #bbf7d0;
+}
+
+.badge-priority-normal {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+}
+
+/* ---------------- پیام‌های موفق/خطا ---------------- */
+
+.message {
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    margin: 10px 0;
+}
+
+.message-success {
+    background: #ecfdf5;
+    border: 1px solid #6ee7b7;
+    color: #065f46;
+}
+
+.message-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+/* ---------------- تب‌های داخلی (اگر جایی استفاده شوند) ---------------- */
+
+.tabs-container {
+    margin-top: 24px;
+}
+
+.tab-header-row {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 12px;
+    padding-bottom: 2px;
+}
+
+.tab-btn {
+    border: none;
+    background: transparent;
+    padding: 8px 14px;
+    border-radius: 999px 999px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab-btn:hover {
+    color: #111827;
+    background: #f3f4ff;
+}
+
+.tab-btn.active {
+    color: #111827;
+    background: #eef2ff;
+    font-weight: 600;
+}
+
+.tab-btn.active::after {
+    content: "";
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+}
+
+.tab-content {
+    margin-top: 4px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+.tab-card {
+    margin-top: 18px;
+    background: #f9fafb;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    padding: 12px 14px;
+}
+
+/* -------------- دیباگ -------------- */
+
+.debug-section {
+    margin-top: 24px;
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.debug-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111827;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.debug-toggle-btn {
+    background: #f3f4f6;
+    color: #374151;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 11px;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+}
+
+.debug-toggle-btn:hover {
+    background: #e5e7eb;
+}
+
+.debug-panel {
+    border-radius: 12px;
+    border: 1px dashed #e5e7eb;
+    padding: 10px 12px;
+    background: #f9fafb;
+    margin-bottom: 4px;
+}
+
+.debug-hidden {
+    display: none;
+}
+
+/* ردیف‌هایی از چک‌ها که متناظر در پرداخت‌ها دارند */
+.matched-check-row {
+    background-color: #ecfdf3;
+}
+
+.matched-check-row:hover {
+    background-color: #dcfce7;
+}
+
+/* ---------------- سایر ---------------- */
+
+.footer-link {
+    display: inline-block;
+    margin-top: 16px;
+    color: #2563eb;
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.footer-link:hover {
+    text-decoration: underline;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 24px 0;
+}
+
+.checkbox-center {
+    text-align: center;
+}
+
+/* --------- modal نمودار مشتری --------- */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+
+.modal-hidden {
+    display: none;
+}
+
+.modal-card {
+    background: #ffffff;
+    border-radius: 18px;
+    padding: 16px 18px 18px;
+    width: 720px;
+    max-width: 95vw;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.modal-subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 2px;
+}
+
+.modal-close-btn {
+    background: #f3f4f6;
+    color: #374151;
+    border-radius: 999px;
+    border: 1px solid #e5e7eb;
+    padding: 4px 9px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.modal-close-btn:hover {
+    background: #e5e7eb;
+}
+
+.modal-body {
+    margin-top: 6px;
+}
+
+.modal-totals {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #374151;
+}
+
+.modal-totals strong {
+    font-weight: 700;
+}
+
+/* -------- صفحه اصلی (آپلود فایل‌ها) -------- */
+
+.hero-intro {
+    margin-top: 4px;
+    margin-bottom: 18px;
+}
+
+.hero-intro h1 {
+    margin-bottom: 6px;
+}
+
+.hero-intro p {
+    font-size: 13px;
+    color: #4b5563;
+}
+
+.upload-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: flex-start;
+    margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+    .upload-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.upload-card {
+    background: rgba(249, 250, 252, 0.94);
+    border-radius: 18px;
+    padding: 16px 16px 14px;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
+}
+
+.upload-card-light {
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 10px 28px rgba(148, 163, 184, 0.20);
+}
+
+.upload-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 6px;
+}
+
+.upload-card-subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 10px;
+}
