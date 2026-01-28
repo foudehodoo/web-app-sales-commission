@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import IO, Any
 import pandas as pd
-import re
 
 
 def load_checks_excel(file_obj: IO[Any]) -> pd.DataFrame:
