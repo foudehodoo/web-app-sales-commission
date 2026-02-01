@@ -1,3 +1,4 @@
+import re
 import os
 import pandas as pd
 import numpy as np
@@ -460,46 +461,98 @@ def compute_commissions(
 
 # ------------------ توابع کمکی پرداخت ------------------
 
-def extract_customer_for_payment(row: pd.Series, checks_df: pd.DataFrame, db_map: dict, bind_map: dict) -> str | None:
+
+def extract_customer_for_payment(
+    row: pd.Series,
+    checks_df: pd.DataFrame,
+    db_map: dict = None,
+    bind_map: dict = None
+) -> str | None:
+    """
+    نسخه اصلاح شده و ایمن برای تشخیص کد مشتری.
+    دقیقاً بر اساس منطق کدی که قبلاً درست کار می‌کرد.
+    """
     stype = row.get("SourceType", "Payment")
     name = row.get("CustomerName")
     desc_str = str(row.get("Description") or "")
-    effective_name = name
 
-    if stype == "Check":
+    # --- استراتژی ۱: فقط برای پرداخت‌های چک ---
+    if stype == "Check" and checks_df is not None and not checks_df.empty:
         candidates = []
-        if pd.notna(row.get("CheckNumber")):
-            candidates.append(str(row.get("CheckNumber")))
-        import re
-        m = re.search(r"(\d{3,10})", desc_str)
-        if m:
-            candidates.append(m.group(1))
 
-        if checks_df is not None and not checks_df.empty:
+        # 1.a شماره چک از خود فایل پرداخت (اگر ستون CheckNumber داشته باشد)
+        if "CheckNumber" in row.index and pd.notna(row["CheckNumber"]):
+            val = str(row["CheckNumber"]).strip()
+            if val and val.lower() != 'nan':
+                candidates.append(val)
+
+        # 1.b استخراج شماره از توضیحات (3 تا 10 رقم)
+        found_nums = re.findall(r"(\d{3,10})", desc_str)
+        for fn in found_nums:
+            candidates.append(fn)
+
+        # --- بخش حیاتی: جستجو در دیتافریم چک‌ها (ایمن‌سازی شده) ---
+        # فقط اگر ستون CheckNumber در فایل چک‌ها وجود داشته باشد جستجو می‌کنیم
+        if "CheckNumber" in checks_df.columns:
+            # یک کپی تمیز از شماره چک‌ها برای مقایسه می‌سازیم (حذف کاراکترهای غیر عددی و صفر اول)
+            # استفاده از try/except برای جلوگیری از خطای غیرمنتظره
+            try:
+                chk_series_clean = (
+                    checks_df["CheckNumber"]
+                    .astype(str)
+                    .str.replace(r"\D", "", regex=True)
+                    .str.lstrip("0")
+                )
+            except:
+                chk_series_clean = pd.Series(dtype=str)
+
             for cand in candidates:
-                clean_num = re.sub(r"\D", "", str(cand)).lstrip("0")
-                if not clean_num:
+                # تمیز کردن کاندیدا
+                cand_clean = re.sub(r"\D", "", str(cand)).lstrip("0")
+                if not cand_clean:
                     continue
-                found_rows = checks_df[checks_df["CheckNumber"].astype(
-                    str).str.contains(clean_num, na=False)]
-                if not found_rows.empty:
-                    chk_code = found_rows.iloc[0].get("CustomerCode")
-                    if pd.notna(chk_code):
-                        return canonicalize_code(chk_code)
-                    chk_name = found_rows.iloc[0].get("CustomerName")
-                    if pd.notna(chk_name):
-                        effective_name = chk_name
-                    break
 
-    if pd.notna(effective_name):
-        key = name_key_for_matching(effective_name)
-        if key and key in bind_map:
-            return canonicalize_code(bind_map[key])
+                # پیدا کردن ردیف‌های مشابه
+                matches_mask = (chk_series_clean == cand_clean)
+                matches = checks_df.loc[matches_mask]
 
-    if db_map is not None and pd.notna(effective_name):
-        key = name_key_for_matching(effective_name)
-        if key and key in db_map:
-            return canonicalize_code(db_map[key])
+                if not matches.empty:
+                    chk_row = matches.iloc[0]
+
+                    # الف) اگر کد مشتری در فایل چک هست
+                    if "CustomerCode" in chk_row and pd.notna(chk_row["CustomerCode"]):
+                        found_code = str(chk_row["CustomerCode"]).strip()
+                        if found_code and found_code.lower() != 'nan':
+                            return canonicalize_code(found_code)
+
+                    # ب) اگر نام مشتری در فایل چک هست -> نام را آپدیت می‌کنیم تا در مرحله بعد (مپینگ) استفاده شود
+                    if "CustomerName" in chk_row and pd.notna(chk_row["CustomerName"]):
+                        chk_name = str(chk_row["CustomerName"]).strip()
+                        if chk_name:
+                            name = chk_name  # نام پیدا شده از چک جایگزین نام پرداخت می‌شود
+                            break  # نام پیدا شد، می‌رویم سراغ مرحله مپینگ نام
+
+    # --- استراتژی ۲ و ۳: مپینگ بر اساس نام (چه نام فایل اصلی، چه نام پیدا شده از چک) ---
+    if pd.notna(name):
+        effective_name = str(name).strip()
+        if effective_name:
+            key = name_key_for_matching(effective_name)
+
+            if key:
+                # اولویت با بایندهای دستی (bind_map)
+                if bind_map and key in bind_map:
+                    return canonicalize_code(bind_map[key])
+
+                # سپس مشتریان دیتابیس (db_map)
+                if db_map and key in db_map:
+                    return canonicalize_code(db_map[key])
+
+    # --- استراتژی ۴: اگر کد در خود ردیف پرداخت وجود دارد ---
+    raw_code = row.get("CustomerCode")
+    if pd.notna(raw_code):
+        c_str = str(raw_code).strip()
+        if c_str and c_str.lower() != 'nan':
+            return canonicalize_code(c_str)
 
     return None
 

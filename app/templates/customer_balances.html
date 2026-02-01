@@ -2,43 +2,148 @@
 {% extends "base.html" %}
 
 {% block content %}
+
+<!-- عنوان و توضیح بالای صفحه -->
+<div class="hero-intro">
+    <h1>مدیریت مانده حساب مشتریان</h1>
+    <p>
+        در این بخش مانده حساب نهایی مشتریان و لیست چک‌های دریافتی را بارگذاری کنید.
+        <br>
+        این اطلاعات مبنای محاسبه "بدهی/بستانکاری" در گزارشات پورسانت خواهد بود.
+    </p>
+</div>
+
+<form action="/upload-balances" method="post" enctype="multipart/form-data">
+    <div class="upload-grid">
+
+        <!-- ستون چپ: فرم اصلی آپلود -->
+        <div class="upload-card">
+            <div class="upload-card-title">مرحله ۱: آپلود فایل‌های مالی</div>
+            <div class="upload-card-subtitle">
+                فایل مانده حساب (دو ردیفه) و فایل چک‌ها را انتخاب کنید.
+            </div>
+
+            <!-- ورودی ۱: مانده حساب -->
+            <div class="form-row">
+                <label>۱. فایل اکسل مانده حساب</label><br />
+                <input type="file" name="balances_file" accept=".xlsx,.xls" required />
+                <small>فایل خروجی مانده اشخاص (شامل نام، کد و مانده نهایی).</small>
+            </div>
+
+            <!-- ورودی ۲: چک‌ها -->
+            <div class="form-row">
+                <label>۲. فایل اکسل اسناد دریافتنی (چک‌ها)</label><br />
+                <input type="file" name="checks_file" accept=".xlsx,.xls" required />
+                <small>جهت اتصال چک‌های پاس نشده به حساب مشتریان.</small>
+            </div>
+
+            <button type="submit" style="margin-top: 20px;">
+                ⬆️ بارگذاری و بروزرسانی مانده‌ها
+            </button>
+        </div>
+
+        <!-- ستون راست: راهنما + کارت‌های توضیح فایل‌ها -->
+        <div class="upload-card upload-card-light">
+            <div class="upload-card-title">راهنمای ساخت فایل‌ها</div>
+            <div class="upload-card-subtitle">
+                مسیرهای خروجی گرفتن در نرم‌افزار حسابداری آسا
+            </div>
+
+            <div class="summary-grid">
+
+                <!-- راهنمای مانده حساب -->
+                <div class="summary-card summary-sales"> <!-- استفاده از کلاس sales برای رنگ سبز/مشابه -->
+                    <div class="summary-card-header">
+                        <div class="summary-title">
+                            <div class="summary-icon">📊</div>
+                            <div>
+                                <div class="summary-title-main">فایل مانده حساب</div>
+                                <div class="summary-title-sub">گزارش مانده اشخاص و شرکت‌ها</div>
+                            </div>
+                        </div>
+                        <button type="button" class="pill-button" data-toggle="hint" data-target="balance-hint">
+                            نمایش راهنما
+                        </button>
+                    </div>
+                    <div id="balance-hint" class="summary-card-body hint-hidden">
+                        <div class="hint-title">مسیر پیشنهادی در نرم‌افزار آسا:</div>
+                        <div class="pill-section">
+                            <div class="pill-row">
+                                <span class="badge-pill">جزیره حسابداری</span>
+                                <span style="font-size: 20px;">←</span>
+                                <span class="badge-pill">گزارشات دفاتر</span>
+                                <span style="font-size: 20px;">←</span>
+                                <span class="badge-pill" style="background-color: #d1fae5; color: #065f46;">مانده حساب
+                                    اشخاص</span>
+                            </div>
+                        </div>
+                        <p class="hint-note">
+                            خروجی باید شامل ستون‌های "نام طرف حساب"، "کد" و "مانده نهایی" باشد. (فرمت دو هدره استاندارد)
+                        </p>
+                    </div>
+                </div>
+
+                <!-- راهنمای چک‌ها -->
+                <div class="summary-card summary-checks">
+                    <div class="summary-card-header">
+                        <div class="summary-title">
+                            <div class="summary-icon">💳</div>
+                            <div>
+                                <div class="summary-title-main">فایل چک‌ها</div>
+                                <div class="summary-title-sub">لیست کلیه اسناد دریافتنی</div>
+                            </div>
+                        </div>
+                        <button type="button" class="pill-button" data-toggle="hint" data-target="checks-hint">
+                            نمایش راهنما
+                        </button>
+                    </div>
+                    <div id="checks-hint" class="summary-card-body hint-hidden">
+                        <div class="hint-title">مسیر آماده‌سازی فایل چک‌ها در نرم‌افزار آسا:</div>
+                        <div class="pill-section">
+                            <div class="pill-row">
+                                <span class="badge-pill">جزیره حسابداری</span>
+                                <span style="font-size: 20px;">←</span>
+                                <span class="badge-pill">گزارشات خزانه داری</span>
+                                <span style="font-size: 20px;">←</span>
+                                <span class="badge-pill" style="background-color: #ffedd5; color: #9a3412;">لیست کلیه
+                                    اسناد دریافتنی</span>
+                            </div>
+                        </div>
+                        <p class="hint-note">
+                            این فایل کمک می‌کند تا اسناد در جریان وصول را شناسایی کرده و تاریخ سررسید آن‌ها را در نظر
+                            بگیریم.
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</form>
+
+<hr style="margin: 40px 0; border: 0; border-top: 1px dashed #ccc;">
+
+<!-- بخش جدول نمایش داده‌ها (پایین صفحه) -->
 <div class="summary-card">
     <div class="summary-card-header">
-        <h2 style="margin:0;">مدیریت مانده حساب مشتریان</h2>
-    </div>
-    <div class="summary-card-body">
-
-        <!-- کارت آپلود فایل -->
-        <div class="upload-card"
-            style="margin-bottom: 24px; padding: 15px; border: 1px solid #eee; border-radius: 8px;">
-            <div class="upload-card-title" style="font-weight: bold; margin-bottom: 10px;">بارگذاری فایل اکسل مانده‌ها
-            </div>
-            <form action="/upload-balances" method="post" enctype="multipart/form-data" class="form-inline">
-                <div class="form-row" style="margin-left: 10px;">
-                    <label style="display:block; margin-bottom:5px; font-size:0.9em;">فایل اکسل گزارش حسابداری (شامل
-                        هدرهای دو ردیفی)</label>
-                    <input type="file" name="balances_file" accept=".xlsx,.xls" required />
-                </div>
-                <button type="submit" class="pill-button">بارگذاری و بروزرسانی مانده‌ها</button>
-            </form>
-        </div>
+        <h2 style="margin:0; font-size: 1.2rem;">لیست مانده‌های موجود در سیستم</h2>
 
         <!-- دکمه‌های عملیاتی -->
-        <div style="margin-bottom: 15px; display: flex; gap: 10px;">
-            <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن ردیف دستی</button>
+        <div style="display: flex; gap: 10px;">
+            <button type="button" class="pill-button" onclick="addNewRow()">➕ افزودن دستی</button>
             <button type="button" class="pill-button" style="background-color: #fee2e2; color: #b91c1c;"
-                onclick="clearAllBalances()">🗑️ حذف تمام مانده‌ها</button>
+                onclick="clearAllBalances()">🗑️ حذف همه</button>
         </div>
+    </div>
 
-        <!-- جدول داده‌ها -->
-        <h3>مانده‌های فعلی در حافظه سیستم</h3>
+    <div class="summary-card-body">
         <div class="table-wrapper" style="overflow-x: auto;">
             <table class="data-table">
                 <thead>
                     <tr>
                         <th>کد مشتری</th>
                         <th>نام مشتری</th>
-                        <th>مانده حساب</th>
+                        <th>مانده حساب (ریال)</th>
                         <th>عملیات</th>
                     </tr>
                 </thead>
@@ -52,13 +157,12 @@
                             {{ row.balance_fmt }}
                         </td>
                         <td>
-                            <!-- دکمه ویرایش -->
-                            <button type="button" class="pill-button"
+                            <button type="button" class="pill-button" style="padding: 4px 10px; font-size: 0.8em;"
                                 onclick="editBalance('{{ row.name }}', '{{ row.raw_code }}', {{ row.balance }})">
                                 ویرایش
                             </button>
-                            <!-- دکمه حذف -->
-                            <button type="button" class="pill-button" style="color:red; background: #fff1f1;"
+                            <button type="button" class="pill-button"
+                                style="color:red; background: #fff1f1; padding: 4px 10px; font-size: 0.8em;"
                                 onclick="deleteBalance('{{ row.raw_code }}', '{{ row.name }}')">
                                 حذف
                             </button>
@@ -67,39 +171,55 @@
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="4" style="text-align:center; padding: 20px;">هنوز مانده‌ای ثبت نشده است.</td>
+                        <td colspan="4" style="text-align:center; padding: 20px; color: #666;">
+                            هنوز اطلاعاتی بارگذاری نشده است.
+                        </td>
                     </tr>
                     {% endif %}
                 </tbody>
             </table>
         </div>
-
     </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+    // اسکریپت باز و بسته کردن راهنماها
+    document.addEventListener('DOMContentLoaded', function () {
+        const toggleButtons = document.querySelectorAll('[data-toggle="hint"]');
+        toggleButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const targetId = this.getAttribute('data-target');
+                const targetElement = document.getElementById(targetId);
+                if (targetElement) {
+                    targetElement.classList.toggle('hint-hidden');
+                    if (targetElement.classList.contains('hint-hidden')) {
+                        this.textContent = 'نمایش راهنما';
+                    } else {
+                        this.textContent = 'مخفی کردن راهنما';
+                    }
+                }
+            });
+        });
+    });
+
+    // اسکریپت‌های مدیریت جدول (ویرایش، حذف، افزودن)
     function deleteBalance(code, name) {
         if (confirm("آیا از حذف این مورد اطمینان دارید؟")) {
             const formData = new FormData();
             formData.append('customer_code', code);
             formData.append('customer_name', name);
-
-            fetch('/delete-balance', {
-                method: 'POST',
-                body: formData
-            }).then(() => location.reload());
+            fetch('/delete-balance', { method: 'POST', body: formData }).then(() => location.reload());
         }
     }
 
     function editBalance(name, code, balance) {
         const newCode = prompt("کد مشتری:", code);
         if (newCode === null) return;
-
         const newName = prompt("نام مشتری:", name);
         if (newName === null) return;
-
         const newBalance = prompt("مانده جدید (عدد وارد کنید):", balance);
         if (newBalance === null) return;
 
@@ -108,11 +228,7 @@
         formData.append('code', newCode);
         formData.append('name', newName);
         formData.append('balance', newBalance);
-
-        fetch('/edit-balance', {
-            method: 'POST',
-            body: formData
-        }).then(() => location.reload());
+        fetch('/edit-balance', { method: 'POST', body: formData }).then(() => location.reload());
     }
 
     function addNewRow() {
@@ -127,17 +243,12 @@
         formData.append('code', code);
         formData.append('name', name);
         formData.append('balance', balance);
-
-        fetch('/add-balance', {
-            method: 'POST',
-            body: formData
-        }).then(() => location.reload());
+        fetch('/add-balance', { method: 'POST', body: formData }).then(() => location.reload());
     }
 
     function clearAllBalances() {
-        if (confirm("هشدار: آیا از حذف تمامی مانده‌های ذخیره شده اطمینان دارید؟ این عملیات غیرقابل بازگشت است.")) {
-            fetch('/clear-balances', { method: 'POST' })
-                .then(() => location.reload());
+        if (confirm("هشدار: آیا از حذف تمامی مانده‌های ذخیره شده اطمینان دارید؟")) {
+            fetch('/clear-balances', { method: 'POST' }).then(() => location.reload());
         }
     }
 </script>
